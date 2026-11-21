@@ -33,6 +33,11 @@ WidgetCard {
   minWidth: 260
   minHeight: 280
 
+  // Controls and text shrink with the widget so everything stays visible at
+  // the minimum size; the progress ring takes whatever height is left.
+  readonly property real uiScale: Math.max(0.6, Math.min(1, Math.min(width / 320, height / 410)))
+  function sc(v) { return Math.round(v * uiScale) }
+
   // ---------------------------------------------------------------------------
   // ⏱️ Pomodoro State & Durations
   // ---------------------------------------------------------------------------
@@ -457,20 +462,20 @@ WidgetCard {
   // ---------------------------------------------------------------------------
   ColumnLayout {
     anchors.fill: parent
-    anchors.margins: Style.space(16)
-    spacing: Style.space(12)
+    anchors.margins: pomodoroWidgetRoot.sc(Style.space(16))
+    spacing: pomodoroWidgetRoot.sc(Style.space(12))
 
     // -------------------------------------------------------------------------
     // 🏷️ Top Header: Icon, Title & Edit/Move Controls
     // -------------------------------------------------------------------------
     RowLayout {
       Layout.fillWidth: true
-      spacing: Style.space(8)
+      spacing: pomodoroWidgetRoot.sc(Style.space(8))
 
       Rectangle {
-        width: 30
-        height: 30
-        radius: 15
+        width: pomodoroWidgetRoot.sc(30)
+        height: pomodoroWidgetRoot.sc(30)
+        radius: pomodoroWidgetRoot.sc(15)
         color: Qt.rgba(pomodoroWidgetRoot.modeColor.r, pomodoroWidgetRoot.modeColor.g, pomodoroWidgetRoot.modeColor.b, 0.2)
         border.color: Qt.rgba(pomodoroWidgetRoot.modeColor.r, pomodoroWidgetRoot.modeColor.g, pomodoroWidgetRoot.modeColor.b, 0.45)
         border.width: 1
@@ -479,24 +484,24 @@ WidgetCard {
           anchors.centerIn: parent
           text: "\uf252"
           font.family: Style.font.family
-          font.pixelSize: 13
+          font.pixelSize: pomodoroWidgetRoot.sc(13)
           color: pomodoroWidgetRoot.modeColor
         }
       }
 
       ColumnLayout {
-        spacing: 0
+        spacing: pomodoroWidgetRoot.sc(0)
         Text {
           text: "Flow Pomodoro"
           font.family: Style.font.family
-          font.pixelSize: 13
+          font.pixelSize: pomodoroWidgetRoot.sc(13)
           font.weight: Font.Bold
           color: Commons.Color.foreground
         }
         Text {
           text: pomodoroWidgetRoot.modeTitle + " · Step " + pomodoroWidgetRoot.cycleStep + " of 4"
           font.family: Style.font.family
-          font.pixelSize: 10
+          font.pixelSize: pomodoroWidgetRoot.sc(10)
           color: Qt.rgba(Commons.Color.foreground.r, Commons.Color.foreground.g, Commons.Color.foreground.b, 0.6)
         }
       }
@@ -506,9 +511,9 @@ WidgetCard {
       // Close Button (Edit Mode)
       Rectangle {
         visible: rootRef && rootRef.layoutEditMode
-        width: 22
-        height: 22
-        radius: 11
+        width: pomodoroWidgetRoot.sc(22)
+        height: pomodoroWidgetRoot.sc(22)
+        radius: pomodoroWidgetRoot.sc(11)
         color: closeMouse.containsMouse ? Qt.rgba(Commons.Color.urgent.r, Commons.Color.urgent.g, Commons.Color.urgent.b, 0.35) : pomodoroWidgetRoot.fgTint(0.08)
         border.color: Qt.rgba(Commons.Color.urgent.r, Commons.Color.urgent.g, Commons.Color.urgent.b, 0.5)
         border.width: 1
@@ -517,7 +522,7 @@ WidgetCard {
           anchors.centerIn: parent
           text: "\uf00d"
           font.family: Style.font.family
-          font.pixelSize: 10
+          font.pixelSize: pomodoroWidgetRoot.sc(10)
           color: Commons.Color.urgent
         }
 
@@ -537,9 +542,9 @@ WidgetCard {
       // Move Grip Button (Edit Mode)
       Rectangle {
         visible: rootRef && rootRef.layoutEditMode
-        width: 22
-        height: 22
-        radius: 11
+        width: pomodoroWidgetRoot.sc(22)
+        height: pomodoroWidgetRoot.sc(22)
+        radius: pomodoroWidgetRoot.sc(11)
         color: customGripMouse.drag.active ? Commons.Color.accent : (customGripMouse.containsMouse ? Qt.rgba(Commons.Color.accent.r, Commons.Color.accent.g, Commons.Color.accent.b, 0.35) : pomodoroWidgetRoot.fgTint(0.08))
         border.color: Qt.rgba(Commons.Color.accent.r, Commons.Color.accent.g, Commons.Color.accent.b, 0.5)
         border.width: 1
@@ -548,7 +553,7 @@ WidgetCard {
           anchors.centerIn: parent
           text: "\uf0b2"
           font.family: Style.font.family
-          font.pixelSize: 10
+          font.pixelSize: pomodoroWidgetRoot.sc(10)
           color: customGripMouse.drag.active ? Commons.Color.background : Commons.Color.accent
         }
 
@@ -579,7 +584,7 @@ WidgetCard {
     // -------------------------------------------------------------------------
     RowLayout {
       Layout.fillWidth: true
-      spacing: Style.space(6)
+      spacing: pomodoroWidgetRoot.sc(Style.space(6))
 
       Repeater {
         model: [
@@ -591,8 +596,8 @@ WidgetCard {
         Rectangle {
           required property var modelData
           Layout.fillWidth: true
-          height: 26
-          radius: 13
+          height: pomodoroWidgetRoot.sc(26)
+          radius: pomodoroWidgetRoot.sc(13)
           readonly property bool isSelected: pomodoroWidgetRoot.currentMode === modelData.mode
           color: isSelected ? Qt.rgba(modelData.color.r, modelData.color.g, modelData.color.b, 0.28) : (modePillMouse.containsMouse ? pomodoroWidgetRoot.fgTint(0.08) : pomodoroWidgetRoot.fgTint(0.03))
           border.color: isSelected ? modelData.color : pomodoroWidgetRoot.fgTint(0.1)
@@ -602,7 +607,7 @@ WidgetCard {
             anchors.centerIn: parent
             text: modelData.label
             font.family: Style.font.family
-            font.pixelSize: 10
+            font.pixelSize: pomodoroWidgetRoot.sc(10)
             font.weight: isSelected ? Font.Bold : Font.Normal
             color: isSelected ? modelData.color : Qt.rgba(Commons.Color.foreground.r, Commons.Color.foreground.g, Commons.Color.foreground.b, 0.75)
           }
@@ -622,81 +627,94 @@ WidgetCard {
     // ⭕ Circular Progress Ring & Time Readout
     // -------------------------------------------------------------------------
     Item {
-      Layout.alignment: Qt.AlignHCenter
-      width: 190
-      height: 190
+      id: ringArea
+      Layout.fillWidth: true
+      Layout.fillHeight: true
+      Layout.minimumHeight: 70
 
-      // Static Background Ring Track
-      Canvas {
-        id: trackCanvas
-        anchors.fill: parent
-        onPaint: {
-          var ctx = getContext("2d")
-          ctx.reset()
-          var c = width / 2
-          var r = c - 10
-          ctx.lineWidth = 10
-          ctx.strokeStyle = pomodoroWidgetRoot.fgTint(0.08)
-          ctx.beginPath()
-          ctx.arc(c, c, r, 0, Math.PI * 2)
-          ctx.stroke()
-        }
-      }
+      readonly property real ringSize: Math.max(60, Math.min(width, height, 190))
+      readonly property real ringStroke: Math.max(4, Math.round(10 * ringSize / 190))
+      readonly property real timeFontSize: Math.max(14, Math.round(32 * ringSize / 190))
 
-      // Dynamic Active Progress Arc
-      Canvas {
-        id: progressArc
-        anchors.fill: parent
-        onPaint: {
-          var ctx = getContext("2d")
-          ctx.reset()
-          var c = width / 2
-          var r = c - 10
-          var progress = pomodoroWidgetRoot.progressFraction
+      Item {
+        id: ringBox
+        anchors.centerIn: parent
+        width: ringArea.ringSize
+        height: ringArea.ringSize
+        onWidthChanged: { trackCanvas.requestPaint(); progressArc.requestPaint() }
 
-          if (progress > 0) {
-            ctx.lineWidth = 10
-            ctx.lineCap = "round"
-            ctx.strokeStyle = pomodoroWidgetRoot.modeColor
+        // Static Background Ring Track
+        Canvas {
+          id: trackCanvas
+          anchors.fill: parent
+          onPaint: {
+            var ctx = getContext("2d")
+            ctx.reset()
+            var c = width / 2
+            var r = c - ringArea.ringStroke
+            ctx.lineWidth = ringArea.ringStroke
+            ctx.strokeStyle = pomodoroWidgetRoot.fgTint(0.08)
             ctx.beginPath()
-            ctx.arc(c, c, r, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * progress))
+            ctx.arc(c, c, r, 0, Math.PI * 2)
             ctx.stroke()
           }
         }
-      }
 
-      // Center Time & Label Stack
-      ColumnLayout {
-        anchors.centerIn: parent
-        spacing: 2
+        // Dynamic Active Progress Arc
+        Canvas {
+          id: progressArc
+          anchors.fill: parent
+          onPaint: {
+            var ctx = getContext("2d")
+            ctx.reset()
+            var c = width / 2
+            var r = c - ringArea.ringStroke
+            var progress = pomodoroWidgetRoot.progressFraction
 
-        Text {
-          Layout.alignment: Qt.AlignHCenter
-          text: pomodoroWidgetRoot.formatTime(pomodoroWidgetRoot.secondsLeft)
-          font.family: "Monospace"
-          font.pixelSize: 32
-          font.weight: Font.Bold
-          color: Commons.Color.foreground
+            if (progress > 0) {
+              ctx.lineWidth = ringArea.ringStroke
+              ctx.lineCap = "round"
+              ctx.strokeStyle = pomodoroWidgetRoot.modeColor
+              ctx.beginPath()
+              ctx.arc(c, c, r, -Math.PI / 2, -Math.PI / 2 + (Math.PI * 2 * progress))
+              ctx.stroke()
+            }
+          }
         }
 
-        RowLayout {
-          Layout.alignment: Qt.AlignHCenter
-          spacing: 5
-
-          Rectangle {
-            width: 6
-            height: 6
-            radius: 3
-            color: pomodoroWidgetRoot.isTimerRunning ? pomodoroWidgetRoot.modeColor : Qt.rgba(Commons.Color.foreground.r, Commons.Color.foreground.g, Commons.Color.foreground.b, 0.3)
-            Behavior on color { ColorAnimation { duration: 200 } }
-          }
+        // Center Time & Label Stack
+        ColumnLayout {
+          anchors.centerIn: parent
+          spacing: pomodoroWidgetRoot.sc(2)
 
           Text {
-            text: pomodoroWidgetRoot.isTimerRunning ? pomodoroWidgetRoot.currentMode : "PAUSED"
-            font.family: Style.font.family
-            font.pixelSize: 10
+            Layout.alignment: Qt.AlignHCenter
+            text: pomodoroWidgetRoot.formatTime(pomodoroWidgetRoot.secondsLeft)
+            font.family: "Monospace"
+            font.pixelSize: ringArea.timeFontSize
             font.weight: Font.Bold
-            color: pomodoroWidgetRoot.isTimerRunning ? pomodoroWidgetRoot.modeColor : Qt.rgba(Commons.Color.foreground.r, Commons.Color.foreground.g, Commons.Color.foreground.b, 0.5)
+            color: Commons.Color.foreground
+          }
+
+          RowLayout {
+            Layout.alignment: Qt.AlignHCenter
+            spacing: pomodoroWidgetRoot.sc(5)
+
+            Rectangle {
+              width: pomodoroWidgetRoot.sc(6)
+              height: pomodoroWidgetRoot.sc(6)
+              radius: pomodoroWidgetRoot.sc(3)
+              color: pomodoroWidgetRoot.isTimerRunning ? pomodoroWidgetRoot.modeColor : Qt.rgba(Commons.Color.foreground.r, Commons.Color.foreground.g, Commons.Color.foreground.b, 0.3)
+              Behavior on color { ColorAnimation { duration: 200 } }
+            }
+
+            Text {
+              text: pomodoroWidgetRoot.isTimerRunning ? pomodoroWidgetRoot.currentMode : "PAUSED"
+              font.family: Style.font.family
+              font.pixelSize: pomodoroWidgetRoot.sc(10)
+              font.weight: Font.Bold
+              color: pomodoroWidgetRoot.isTimerRunning ? pomodoroWidgetRoot.modeColor : Qt.rgba(Commons.Color.foreground.r, Commons.Color.foreground.g, Commons.Color.foreground.b, 0.5)
+            }
           }
         }
       }
@@ -708,15 +726,15 @@ WidgetCard {
     RowLayout {
       Layout.fillWidth: true
       Layout.alignment: Qt.AlignHCenter
-      spacing: Style.space(12)
+      spacing: pomodoroWidgetRoot.sc(Style.space(12))
 
       Item { Layout.fillWidth: true }
 
       // Reset Button
       Rectangle {
-        width: 36
-        height: 36
-        radius: 18
+        width: pomodoroWidgetRoot.sc(36)
+        height: pomodoroWidgetRoot.sc(36)
+        radius: pomodoroWidgetRoot.sc(18)
         color: resetMouse.containsMouse ? pomodoroWidgetRoot.fgTint(0.15) : pomodoroWidgetRoot.fgTint(0.06)
         border.color: pomodoroWidgetRoot.fgTint(0.12)
         border.width: 1
@@ -725,7 +743,7 @@ WidgetCard {
           anchors.centerIn: parent
           text: "\uf0e2"
           font.family: Style.font.family
-          font.pixelSize: 13
+          font.pixelSize: pomodoroWidgetRoot.sc(13)
           color: Commons.Color.foreground
         }
 
@@ -740,9 +758,9 @@ WidgetCard {
 
       // Primary Start / Pause Pill Button
       Rectangle {
-        implicitWidth: playPillRow.implicitWidth + 28
-        implicitHeight: 38
-        radius: 19
+        implicitWidth: playPillRow.implicitWidth + pomodoroWidgetRoot.sc(28)
+        implicitHeight: pomodoroWidgetRoot.sc(38)
+        radius: pomodoroWidgetRoot.sc(19)
         color: playMouse.containsMouse ? Qt.lighter(pomodoroWidgetRoot.modeColor, 1.15) : pomodoroWidgetRoot.modeColor
 
         layer.enabled: true
@@ -756,19 +774,19 @@ WidgetCard {
         RowLayout {
           id: playPillRow
           anchors.centerIn: parent
-          spacing: Style.space(6)
+          spacing: pomodoroWidgetRoot.sc(Style.space(6))
 
           Text {
             text: pomodoroWidgetRoot.isTimerRunning ? "\uf04c" : "\uf04b"
             font.family: Style.font.family
-            font.pixelSize: 12
+            font.pixelSize: pomodoroWidgetRoot.sc(12)
             color: Commons.Color.background
           }
 
           Text {
             text: pomodoroWidgetRoot.isTimerRunning ? "Pause" : (pomodoroWidgetRoot.secondsLeft < pomodoroWidgetRoot.totalSeconds ? "Resume" : "Start " + (pomodoroWidgetRoot.currentMode === "FOCUS" ? "Focus" : "Break"))
             font.family: Style.font.family
-            font.pixelSize: 12
+            font.pixelSize: pomodoroWidgetRoot.sc(12)
             font.weight: Font.Bold
             color: Commons.Color.background
           }
@@ -785,9 +803,9 @@ WidgetCard {
 
       // Skip Button
       Rectangle {
-        width: 36
-        height: 36
-        radius: 18
+        width: pomodoroWidgetRoot.sc(36)
+        height: pomodoroWidgetRoot.sc(36)
+        radius: pomodoroWidgetRoot.sc(18)
         color: skipMouse.containsMouse ? pomodoroWidgetRoot.fgTint(0.15) : pomodoroWidgetRoot.fgTint(0.06)
         border.color: pomodoroWidgetRoot.fgTint(0.12)
         border.width: 1
@@ -796,7 +814,7 @@ WidgetCard {
           anchors.centerIn: parent
           text: "\uf051"
           font.family: Style.font.family
-          font.pixelSize: 13
+          font.pixelSize: pomodoroWidgetRoot.sc(13)
           color: Commons.Color.foreground
         }
 
@@ -817,19 +835,19 @@ WidgetCard {
     // -------------------------------------------------------------------------
     RowLayout {
       Layout.fillWidth: true
-      Layout.topMargin: Style.space(4)
+      Layout.topMargin: pomodoroWidgetRoot.sc(Style.space(4))
 
       // 4 Cycle Dots
       RowLayout {
-        spacing: 5
+        spacing: pomodoroWidgetRoot.sc(5)
 
         Repeater {
           model: 4
           Rectangle {
             required property int index
-            width: 8
-            height: 8
-            radius: 4
+            width: pomodoroWidgetRoot.sc(8)
+            height: pomodoroWidgetRoot.sc(8)
+            radius: pomodoroWidgetRoot.sc(4)
             color: (index + 1) <= pomodoroWidgetRoot.cycleStep ? pomodoroWidgetRoot.modeColor : pomodoroWidgetRoot.fgTint(0.15)
             border.color: (index + 1) === pomodoroWidgetRoot.cycleStep ? Qt.lighter(pomodoroWidgetRoot.modeColor, 1.3) : "transparent"
             border.width: 1
@@ -841,17 +859,17 @@ WidgetCard {
 
       // Streak Tally Badge
       RowLayout {
-        spacing: 4
+        spacing: pomodoroWidgetRoot.sc(4)
         Text {
           text: "\uf06d"
           font.family: Style.font.family
-          font.pixelSize: 10
+          font.pixelSize: pomodoroWidgetRoot.sc(10)
           color: "#f59e0b" // Amber flame
         }
         Text {
           text: pomodoroWidgetRoot.completedSessions + (pomodoroWidgetRoot.completedSessions === 1 ? " session" : " sessions") + " completed"
           font.family: Style.font.family
-          font.pixelSize: 10
+          font.pixelSize: pomodoroWidgetRoot.sc(10)
           color: Qt.rgba(Commons.Color.foreground.r, Commons.Color.foreground.g, Commons.Color.foreground.b, 0.65)
         }
       }
