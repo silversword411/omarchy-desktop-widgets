@@ -424,8 +424,24 @@ Item {
     return entry
   }
 
-  // Gives the widget the same (scaled) position and size on every monitor it is
-  // shown on, taken from its position on sourceMonitor.
+  // Maps a saved geometry onto another monitor so the layout looks the same:
+  // position and size are multiplied by one factor, the smaller of the two
+  // logical-size ratios, so a 16:9 layout lands identically on a 16:9 monitor.
+  function scaleGeometryUniformly(srcPos, srcSize, dstSize) {
+    var entry = { x: srcPos.x, y: srcPos.y }
+    if (srcPos.w) entry.w = srcPos.w
+    if (srcPos.h) entry.h = srcPos.h
+    if (!srcSize || !dstSize || srcSize.w <= 0 || srcSize.h <= 0) return entry
+    var f = Math.min(dstSize.w / srcSize.w, dstSize.h / srcSize.h)
+    entry.x = Math.round(srcPos.x * f)
+    entry.y = Math.round(srcPos.y * f)
+    if (entry.w) entry.w = Math.round(entry.w * f)
+    if (entry.h) entry.h = Math.round(entry.h * f)
+    return entry
+  }
+
+  // Gives the widget the same position and size on every monitor it is shown
+  // on, taken from sourceMonitor and scaled uniformly to each monitor.
   function syncWidgetPositions(id, sourceMonitor) {
     var targetId = (id === "btc_tracker") ? "coin_tracker" : id
     var screens = Quickshell.screens
@@ -452,7 +468,7 @@ Item {
       if (!root.isWidgetActiveOnMonitor(targetId, m)) continue
       var entry = (m === sourceMonitor)
         ? { x: srcPos.x, y: srcPos.y }
-        : root.scalePositionToMonitor(srcPos, sizes[sourceMonitor], sizes[m])
+        : root.scaleGeometryUniformly(srcPos, sizes[sourceMonitor], sizes[m])
       if (m === sourceMonitor) {
         if (srcPos.w) entry.w = srcPos.w
         if (srcPos.h) entry.h = srcPos.h
