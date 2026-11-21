@@ -5,19 +5,17 @@ import Quickshell.Widgets
 import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
+import "."
 
 Item {
   id: root
 
   property var bar: null
 
-  // State
-  property string currentMode: "FOCUS" // "FOCUS" | "SHORT" | "LONG"
-  property bool isTimerRunning: false
-  property int focusDurationSec: 25 * 60
-  property int shortDurationSec: 5 * 60
-  property int longDurationSec: 15 * 60
-  property int secondsLeft: focusDurationSec
+  // Shared with the desktop widget, see PomodoroStore.qml
+  readonly property string currentMode: PomodoroStore.currentMode
+  readonly property bool isTimerRunning: PomodoroStore.isTimerRunning
+  readonly property int secondsLeft: PomodoroStore.secondsLeft
 
   readonly property color modeColor: {
     if (currentMode === "SHORT") return "#10b981"
@@ -25,56 +23,13 @@ Item {
     return Commons.Color.accent
   }
 
-  function formatTime(totalSec) {
-    var m = Math.floor(totalSec / 60)
-    var s = totalSec % 60
-    return (m < 10 ? "0" : "") + m + ":" + (s < 10 ? "0" : "") + s
-  }
+  function formatTime(totalSec) { return PomodoroStore.formatTime(totalSec) }
+  function toggleRunning() { PomodoroStore.togglePlayPause() }
+  function resetTimer() { PomodoroStore.resetCurrentTimer() }
+  function cycleMode() { PomodoroStore.skipToNextSession() }
 
-  function toggleRunning() {
-    isTimerRunning = !isTimerRunning
-  }
-
-  function resetTimer() {
-    isTimerRunning = false
-    if (currentMode === "FOCUS") secondsLeft = focusDurationSec
-    else if (currentMode === "SHORT") secondsLeft = shortDurationSec
-    else secondsLeft = longDurationSec
-  }
-
-  function cycleMode() {
-    isTimerRunning = false
-    if (currentMode === "FOCUS") {
-      currentMode = "SHORT"
-      secondsLeft = shortDurationSec
-    } else if (currentMode === "SHORT") {
-      currentMode = "LONG"
-      secondsLeft = longDurationSec
-    } else {
-      currentMode = "FOCUS"
-      secondsLeft = focusDurationSec
-    }
-  }
-
-  // Flips each tick to blink the icon in the same frame as the countdown text,
-  // instead of a looping animation redrawing the bar every frame
-  property bool tickPhase: false
-
-  Timer {
-    id: tickTimer
-    interval: 1000
-    repeat: true
-    running: root.isTimerRunning
-    onTriggered: {
-      root.tickPhase = !root.tickPhase
-      if (root.secondsLeft > 0) {
-        root.secondsLeft--
-      } else {
-        root.isTimerRunning = false
-        root.cycleMode()
-      }
-    }
-  }
+  // Blinks the icon in step with the countdown text, no animation loop needed
+  readonly property bool tickPhase: secondsLeft % 2 === 0
 
   implicitWidth: pillContainer.implicitWidth
   implicitHeight: Style.bar.statusSlot || 32

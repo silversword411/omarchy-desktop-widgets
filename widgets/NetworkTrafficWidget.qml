@@ -7,6 +7,7 @@ import Quickshell.Io
 import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
+import "stores"
 
 WidgetCard {
   id: networkWidgetRoot
@@ -39,13 +40,14 @@ WidgetCard {
   // ---------------------------------------------------------------------------
   // 🌐 Network Traffic State & Poller Process
   // ---------------------------------------------------------------------------
-  property real netRxSpeed: 0
-  property real netTxSpeed: 0
-  property string netRxSpeedStr: "0.0 KB/s"
-  property string netTxSpeedStr: "0.0 KB/s"
-  property string netRxTotalStr: ""
-  property string netTxTotalStr: ""
-  property string netIface: "Network"
+  // Sampled once for every copy, see stores/NetworkSampler.qml
+  readonly property real netRxSpeed: NetworkSampler.netRxSpeed
+  readonly property real netTxSpeed: NetworkSampler.netTxSpeed
+  readonly property string netRxSpeedStr: NetworkSampler.netRxSpeedStr
+  readonly property string netTxSpeedStr: NetworkSampler.netTxSpeedStr
+  readonly property string netRxTotalStr: NetworkSampler.netRxTotalStr
+  readonly property string netTxTotalStr: NetworkSampler.netTxTotalStr
+  readonly property string netIface: NetworkSampler.netIface
   property bool fillGraph: true
   property bool showTotals: false
   property bool logTimeScale: false
@@ -62,41 +64,20 @@ WidgetCard {
   ]
   // Buffer sized for the longest time scale, so switching scales shows data immediately.
   // The +1 makes the oldest visible sample (left edge) exactly the time scale old.
-  readonly property int historyLength: Math.round(timeScaleOptions[timeScaleOptions.length - 1].seconds * 1000 / netPollTimer.interval) + 1
-  readonly property int visibleSamples: Math.max(2, Math.min(historyLength, Math.round(timeScaleSeconds * 1000 / netPollTimer.interval) + 1))
+  readonly property int historyLength: NetworkSampler.historyLength
+  readonly property int visibleSamples: Math.max(2, Math.min(historyLength, Math.round(timeScaleSeconds * 1000 / NetworkSampler.pollIntervalMs) + 1))
   readonly property real logTimeKnee: 4 // Samples; larger flattens the log curve
-  property var netRxHistory: emptyHistory()
-  property var netTxHistory: emptyHistory()
+  readonly property var netRxHistory: NetworkSampler.netRxHistory
+  readonly property var netTxHistory: NetworkSampler.netTxHistory
   property int hoverIndex: -1
 
-  function emptyHistory() {
-    var arr = []
-    for (var i = 0; i < historyLength; i++) arr.push(0)
-    return arr
-  }
-
-  // Mirrors format_speed() in get-network.sh
-  function formatSpeed(bps) {
-    if (bps < 1024) return bps.toFixed(0) + " B/s"
-    if (bps < 1024 * 1024) return (bps / 1024).toFixed(1) + " KB/s"
-    if (bps < 1024 * 1024 * 1024) return (bps / (1024 * 1024)).toFixed(1) + " MB/s"
-    return (bps / (1024 * 1024 * 1024)).toFixed(2) + " GB/s"
-  }
-
-  // Mirrors format_bytes() in get-network.sh
-  function formatBytes(n) {
-    var units = ["B", "KB", "MB", "GB", "TB"]
-    for (var i = 0; i < units.length; i++) {
-      if (n < 1024) return n.toFixed(1) + " " + units[i]
-      n /= 1024
-    }
-    return n.toFixed(1) + " PB"
-  }
+  function formatSpeed(bps) { return NetworkSampler.formatSpeed(bps) }
+  function formatBytes(n) { return NetworkSampler.formatBytes(n) }
 
   function hoverTimeOffset() {
     var steps = netRxHistory.length - 1 - hoverIndex
     if (steps <= 0) return "Now"
-    var secs = steps * netPollTimer.interval / 1000
+    var secs = steps * NetworkSampler.pollIntervalMs / 1000
     if (secs < 60) return "-" + Number(secs).toFixed(1).replace(/\.0$/, "") + "s"
     var total = Math.round(secs)
     var rem = total % 60
@@ -162,7 +143,7 @@ WidgetCard {
     var result = []
     var lastX = canvasWidth
     for (var m = 0; m < marks.length; m++) {
-      var age = marks[m] * 1000 / netPollTimer.interval
+      var age = marks[m] * 1000 / NetworkSampler.pollIntervalMs
       if (age >= visibleSamples - 1) break
       var x = ageFraction(age) * canvasWidth
       if (lastX - x < minGap || x < minGap) continue
@@ -174,9 +155,9 @@ WidgetCard {
   }
 
   // Network Device Selection State
-  property var availableDevices: []
-  property string selectedDeviceId: "AUTO"
-  property string activeIface: ""
+  readonly property var availableDevices: NetworkSampler.availableDevices
+  readonly property string selectedDeviceId: NetworkSampler.selectedDeviceId
+  readonly property string activeIface: NetworkSampler.activeIface
   property bool devicePopoutOpen: false
   menuWidth: 300
 
@@ -200,6 +181,7 @@ WidgetCard {
     applySavedSettings()
     minHeightClampReady = true
     Qt.callLater(ensureMinHeight)
+    NetworkSampler.setVisible(samplerKey, visible)
   }
 
   onContextMenuOpenChanged: {
@@ -209,26 +191,9 @@ WidgetCard {
     }
   }
 
-  readonly property string netScriptPath: {
-    var u = Qt.resolvedUrl("../get-network.sh").toString()
-    return decodeURIComponent(u.replace(/^file:\/\//, ""))
-  }
-
-  // Device switch requested while the info script was already running (e.g. the
-  // popout just opened); applied when that run exits instead of being dropped
-  property string pendingDeviceId: ""
-
   function selectNetworkDevice(devId) {
-    selectedDeviceId = devId
-    netRxHistory = emptyHistory()
-    netTxHistory = emptyHistory()
+    NetworkSampler.selectNetworkDevice(devId)
     netCanvas.requestPaint()
-    if (netInfoProc.running) {
-      pendingDeviceId = devId
-    } else {
-      netInfoProc.command = [networkWidgetRoot.netScriptPath, devId]
-      netInfoProc.running = true
-    }
     devicePopoutOpen = false
     contextMenuOpen = false
   }
@@ -690,7 +655,7 @@ WidgetCard {
           hoverEnabled: true
           cursorShape: Qt.PointingHandCursor
           onClicked: {
-            if (!netInfoProc.running) netInfoProc.running = true
+            NetworkSampler.refreshNetInfo()
             networkWidgetRoot.contextMenuOpen = false
           }
         }
@@ -698,135 +663,14 @@ WidgetCard {
     }
   }
 
-  // Interface metadata (monitored interface, display name, device list). Speeds
-  // are sampled from /proc/net/dev below, so this Python + `ip` script only runs
-  // at startup, on device switch/refresh, when the device menu opens, when the
-  // monitored interface disappears, and every netMetaTimer interval.
-  function refreshNetInfo() {
-    if (!netInfoProc.running) netInfoProc.running = true
-  }
-
+  function refreshNetInfo() { NetworkSampler.refreshNetInfo() }
   onDevicePopoutOpenChanged: if (devicePopoutOpen) refreshNetInfo()
 
-  Process {
-    id: netInfoProc
-    command: [networkWidgetRoot.netScriptPath]
-    running: true
-    // Device argument is a one-shot switch request; later polls must run without it
-    onStarted: {
-      networkWidgetRoot.lastNetInfoMs = Date.now()
-      command = [networkWidgetRoot.netScriptPath]
-    }
-    onExited: {
-      if (networkWidgetRoot.pendingDeviceId) {
-        var devId = networkWidgetRoot.pendingDeviceId
-        networkWidgetRoot.pendingDeviceId = ""
-        command = [networkWidgetRoot.netScriptPath, devId]
-        running = true
-      }
-    }
-    stdout: SplitParser {
-      onRead: function(line) {
-        try {
-          var data = JSON.parse(String(line).trim())
-          if (data.iface) networkWidgetRoot.netIface = data.iface
-          if (data.available_devices) networkWidgetRoot.availableDevices = data.available_devices
-          // A run that predates a pending switch reports the old selection; skip it
-          if (networkWidgetRoot.pendingDeviceId) return
-          if (data.selected_iface) networkWidgetRoot.selectedDeviceId = data.selected_iface
-          if (data.active_iface) networkWidgetRoot.activeIface = data.active_iface
-        } catch (e) {}
-      }
-    }
-  }
-
-  // Picks up auto-detect changes (e.g. Wi-Fi to Ethernet) and fresh device IPs.
-  // This one forks (bash + python + ip), so it pauses while the card is off
-  // screen; coming back refreshes right away only if the last run is stale.
-  // The traffic sampling below is a plain file read and keeps running.
-  property real lastNetInfoMs: 0
-  onVisibleChanged: {
-    if (visible && Date.now() - lastNetInfoMs >= netMetaTimer.interval) refreshNetInfo()
-  }
-  Timer {
-    id: netMetaTimer
-    interval: 30000
-    running: networkWidgetRoot.visible
-    repeat: true
-    onTriggered: networkWidgetRoot.refreshNetInfo()
-  }
-
-  // Traffic sampling. Keeps running while hidden so the history stays continuous.
-  property real lastRxBytes: 0
-  property real lastTxBytes: 0
-  property real lastSampleMs: 0
-  property string lastSampleIface: ""
-
-  function sampleTraffic(devText) {
-    var iface = activeIface
-    if (!iface || iface === "none") return
-    var rx = -1
-    var tx = -1
-    var lines = devText.split("\n")
-    for (var i = 0; i < lines.length; i++) {
-      var sep = lines[i].indexOf(":")
-      if (sep < 0 || lines[i].substring(0, sep).trim() !== iface) continue
-      var cols = lines[i].substring(sep + 1).trim().split(/\s+/)
-      if (cols.length >= 9) {
-        rx = Number(cols[0])
-        tx = Number(cols[8])
-      }
-      break
-    }
-
-    var now = Date.now()
-    var rxSpeed = 0
-    var txSpeed = 0
-    if (rx < 0) {
-      // Monitored interface is gone (unplugged, renamed); let the script re-resolve
-      refreshNetInfo()
-    } else {
-      // Same rules as the script's cache: no rate across a gap, switch or counter reset
-      var dt = (now - lastSampleMs) / 1000
-      if (iface === lastSampleIface && dt > 0 && dt < 10 && rx >= lastRxBytes && tx >= lastTxBytes) {
-        rxSpeed = Math.round((rx - lastRxBytes) / dt)
-        txSpeed = Math.round((tx - lastTxBytes) / dt)
-      }
-      lastRxBytes = rx
-      lastTxBytes = tx
-      netRxTotalStr = formatBytes(rx)
-      netTxTotalStr = formatBytes(tx)
-    }
-    lastSampleMs = now
-    lastSampleIface = rx < 0 ? "" : iface
-
-    netRxSpeed = rxSpeed
-    netTxSpeed = txSpeed
-    netRxSpeedStr = formatSpeed(rxSpeed)
-    netTxSpeedStr = formatSpeed(txSpeed)
-
-    var rxList = netRxHistory.slice(1)
-    rxList.push(rxSpeed)
-    netRxHistory = rxList
-
-    var txList = netTxHistory.slice(1)
-    txList.push(txSpeed)
-    netTxHistory = txList
-  }
-
-  FileView {
-    id: netDevFile
-    path: "/proc/net/dev"
-    onLoaded: networkWidgetRoot.sampleTraffic(text())
-  }
-
-  Timer {
-    id: netPollTimer
-    interval: 1500
-    running: true
-    repeat: true
-    onTriggered: netDevFile.reload()
-  }
+  // Tells the sampler whether this copy is on screen (the metadata script
+  // pauses while no copy is)
+  readonly property string samplerKey: widgetId + ":" + monitorName
+  onVisibleChanged: NetworkSampler.setVisible(samplerKey, visible)
+  Component.onDestruction: NetworkSampler.setVisible(samplerKey, false)
 
   ColumnLayout {
     id: netCardLayout

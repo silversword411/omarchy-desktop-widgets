@@ -13,6 +13,7 @@ import qs.Ui
 // Import base WidgetCard from the shared repository link or parent widgets directory
 import "../../shared"
 import ".."
+import "."
 
 WidgetCard {
   id: pomodoroWidgetRoot
@@ -41,40 +42,22 @@ WidgetCard {
   // ---------------------------------------------------------------------------
   // ⏱️ Pomodoro State & Durations
   // ---------------------------------------------------------------------------
-  property string currentMode: "FOCUS" // "FOCUS" | "SHORT" | "LONG"
-  property bool isTimerRunning: false
-
-  property int focusDurationSec: 25 * 60  // 25 minutes
-  property int shortDurationSec: 5 * 60   // 5 minutes
-  property int longDurationSec: 15 * 60   // 15 minutes
-
-  property int totalSeconds: focusDurationSec
-  property int secondsLeft: focusDurationSec
-
-  property int completedSessions: 0
-  property int cycleStep: 1 // 1, 2, 3, 4
-  property string activePreset: "25/5"
-  property bool soundAlerts: true
-  property bool showNotifications: true
+  // Shared with every other copy and the bar pill, see PomodoroStore.qml
+  readonly property string currentMode: PomodoroStore.currentMode
+  readonly property bool isTimerRunning: PomodoroStore.isTimerRunning
+  readonly property int focusDurationSec: PomodoroStore.focusDurationSec
+  readonly property int shortDurationSec: PomodoroStore.shortDurationSec
+  readonly property int longDurationSec: PomodoroStore.longDurationSec
+  readonly property int totalSeconds: PomodoroStore.totalSeconds
+  readonly property int secondsLeft: PomodoroStore.secondsLeft
+  readonly property int completedSessions: PomodoroStore.completedSessions
+  readonly property int cycleStep: PomodoroStore.cycleStep
+  readonly property string activePreset: PomodoroStore.activePreset
+  readonly property bool soundAlerts: PomodoroStore.soundAlerts
+  readonly property bool showNotifications: PomodoroStore.showNotifications
   menuWidth: 320
 
-  function applyPreset(preset) {
-    activePreset = preset
-    if (preset === "25/5") {
-      focusDurationSec = 25 * 60
-      shortDurationSec = 5 * 60
-      longDurationSec = 15 * 60
-    } else if (preset === "50/10") {
-      focusDurationSec = 50 * 60
-      shortDurationSec = 10 * 60
-      longDurationSec = 20 * 60
-    } else if (preset === "15/3") {
-      focusDurationSec = 15 * 60
-      shortDurationSec = 3 * 60
-      longDurationSec = 10 * 60
-    }
-    setMode(currentMode, false)
-  }
+  function applyPreset(preset) { PomodoroStore.applyPreset(preset) }
 
   customMenuContent: Component {
     ColumnLayout {
@@ -199,7 +182,7 @@ WidgetCard {
           anchors.fill: parent
           hoverEnabled: true
           cursorShape: Qt.PointingHandCursor
-          onClicked: pomodoroWidgetRoot.soundAlerts = !pomodoroWidgetRoot.soundAlerts
+          onClicked: PomodoroStore.soundAlerts = !PomodoroStore.soundAlerts
         }
       }
 
@@ -244,7 +227,7 @@ WidgetCard {
           anchors.fill: parent
           hoverEnabled: true
           cursorShape: Qt.PointingHandCursor
-          onClicked: pomodoroWidgetRoot.showNotifications = !pomodoroWidgetRoot.showNotifications
+          onClicked: PomodoroStore.showNotifications = !PomodoroStore.showNotifications
         }
       }
 
@@ -349,104 +332,18 @@ WidgetCard {
     return Commons.Color.accent                           // Theme Accent / Focus Red
   }
 
-  readonly property string modeTitle: {
-    if (currentMode === "SHORT") return "Short Break"
-    if (currentMode === "LONG") return "Long Break"
-    return "Deep Focus"
-  }
+  readonly property string modeTitle: PomodoroStore.modeTitle
+  readonly property real progressFraction: PomodoroStore.progressFraction
 
-  readonly property real progressFraction: {
-    if (totalSeconds <= 0) return 0
-    return Math.max(0.0, Math.min(1.0, 1.0 - (secondsLeft / totalSeconds)))
-  }
+  function formatTime(secs) { return PomodoroStore.formatTime(secs) }
+  function setMode(mode, autoStart) { PomodoroStore.setMode(mode, autoStart) }
+  function togglePlayPause() { PomodoroStore.togglePlayPause() }
+  function resetCurrentTimer() { PomodoroStore.resetCurrentTimer() }
+  function skipToNextSession() { PomodoroStore.skipToNextSession() }
 
-  function formatTime(secs) {
-    var m = Math.floor(secs / 60)
-    var s = secs % 60
-    return (m < 10 ? "0" + m : m.toString()) + ":" + (s < 10 ? "0" + s : s.toString())
-  }
-
-  function setMode(mode, autoStart) {
-    currentMode = mode
-    isTimerRunning = autoStart ? true : false
-    if (mode === "FOCUS") totalSeconds = focusDurationSec
-    else if (mode === "SHORT") totalSeconds = shortDurationSec
-    else if (mode === "LONG") totalSeconds = longDurationSec
-    secondsLeft = totalSeconds
-    progressArc.requestPaint()
-  }
-
-  function togglePlayPause() {
-    isTimerRunning = !isTimerRunning
-  }
-
-  function resetCurrentTimer() {
-    isTimerRunning = false
-    secondsLeft = totalSeconds
-    progressArc.requestPaint()
-  }
-
-  function skipToNextSession() {
-    isTimerRunning = false
-    if (currentMode === "FOCUS") {
-      completedSessions++
-      if (cycleStep >= 4) {
-        cycleStep = 1
-        setMode("LONG", false)
-      } else {
-        cycleStep++
-        setMode("SHORT", false)
-      }
-    } else {
-      setMode("FOCUS", false)
-    }
-  }
-
-  function onSessionFinished() {
-    isTimerRunning = false
-    if (currentMode === "FOCUS") {
-      completedSessions++
-      if (pomodoroWidgetRoot.showNotifications) {
-        Quickshell.execDetached(["notify-send", "-i", "appointment-soon", "🍅 Focus Session Complete!", "Great job! Take a well-deserved break."])
-      }
-      if (pomodoroWidgetRoot.soundAlerts) {
-        Quickshell.execDetached(["bash", "-c", "paplay /usr/share/sounds/freedesktop/stereo/complete.oga 2>/dev/null"])
-      }
-
-      if (cycleStep >= 4) {
-        cycleStep = 1
-        setMode("LONG", true)
-      } else {
-        cycleStep++
-        setMode("SHORT", true)
-      }
-    } else {
-      if (pomodoroWidgetRoot.showNotifications) {
-        Quickshell.execDetached(["notify-send", "-i", "appointment-soon", "⚡ Break Finished!", "Time to dive back into flow state."])
-      }
-      if (pomodoroWidgetRoot.soundAlerts) {
-        Quickshell.execDetached(["bash", "-c", "paplay /usr/share/sounds/freedesktop/stereo/bell.oga 2>/dev/null"])
-      }
-      setMode("FOCUS", true)
-    }
-  }
-
-  // 1-second countdown clock ticker
-  Timer {
-    interval: 1000
-    repeat: true
-    running: pomodoroWidgetRoot.isTimerRunning
-    onTriggered: {
-      if (pomodoroWidgetRoot.secondsLeft > 1) {
-        pomodoroWidgetRoot.secondsLeft--
-        if (pomodoroWidgetRoot.visible) progressArc.requestPaint()
-      } else {
-        pomodoroWidgetRoot.secondsLeft = 0
-        if (pomodoroWidgetRoot.visible) progressArc.requestPaint()
-        pomodoroWidgetRoot.onSessionFinished()
-      }
-    }
-  }
+  // The arc is a Canvas: repaint when the shared countdown moves, only while shown
+  onSecondsLeftChanged: if (visible) progressArc.requestPaint()
+  onTotalSecondsChanged: if (visible) progressArc.requestPaint()
 
   // The ticker skips repaints while hidden; catch the arc up when shown again
   onVisibleChanged: if (visible) progressArc.requestPaint()

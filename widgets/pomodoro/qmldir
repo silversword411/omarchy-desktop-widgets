@@ -1,0 +1,3 @@
+singleton PomodoroStore 1.0 PomodoroStore.qml
+PomodoroWidget 1.0 PomodoroWidget.qml
+PomodoroBarWidget 1.0 PomodoroBarWidget.qml

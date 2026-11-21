@@ -1,0 +1,3 @@
+singleton NetworkSampler 1.0 NetworkSampler.qml
+singleton FolderStore 1.0 FolderStore.qml
+singleton MediaVisualizer 1.0 MediaVisualizer.qml

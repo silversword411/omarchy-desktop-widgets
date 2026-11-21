@@ -7,6 +7,7 @@ import Quickshell.Services.Mpris
 import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
+import "stores"
 
 WidgetCard {
   id: mediaWidgetRoot
@@ -39,7 +40,11 @@ WidgetCard {
 
   onSettingsLoaded: applySavedSettings()
   onRootRefChanged: applySavedSettings()
-  Component.onCompleted: applySavedSettings()
+  Component.onCompleted: {
+    applySavedSettings()
+    MediaVisualizer.setWanting(driverKey, wantsVisualizer)
+    if (isPlaying) MediaVisualizer.playing = true
+  }
 
   readonly property var players: Mpris.players ? Mpris.players.values : []
   readonly property var activePlayer: {
@@ -216,40 +221,13 @@ WidgetCard {
   // ---------------------------------------------------------------------------
   // 📊 Audio Spectrum Visualizer Data (24 dynamic frequency bars)
   // ---------------------------------------------------------------------------
-  // Flat bars until something plays (matches what the old idle tick produced).
-  property var visualizerHeights: Array(24).fill(4)
-  property real animPhase: 0
-  property bool visualizerFlat: false
-
-  // Only tick while bars can be seen and are moving: keep going while
-  // playing, and once more after playback stops to flatten them, then idle.
-  Timer {
-    interval: 65
-    running: mediaWidgetRoot.visible && mediaWidgetRoot.showVisualizer && (mediaWidgetRoot.isPlaying || !mediaWidgetRoot.visualizerFlat)
-    repeat: true
-    onRunningChanged: if (!running) mediaWidgetRoot.visualizerHeights = Array(24).fill(4)
-    onTriggered: {
-      mediaWidgetRoot.animPhase += 0.25
-      var heights = []
-      var count = 24
-      var playing = mediaWidgetRoot.isPlaying
-
-      for (var i = 0; i < count; i++) {
-        if (!playing) {
-          heights.push(4)
-        } else {
-          var sin1 = Math.sin(mediaWidgetRoot.animPhase + i * 0.45)
-          var sin2 = Math.cos(mediaWidgetRoot.animPhase * 1.3 - i * 0.3)
-          var raw = (sin1 + sin2 + 2) / 4 // 0 to 1
-          var pulse = (Math.sin(mediaWidgetRoot.animPhase * 2.2) + 1) * 0.15
-          var h = Math.round(6 + (raw + pulse) * 46 + (Math.random() * 8))
-          heights.push(Math.min(58, Math.max(6, h)))
-        }
-      }
-      mediaWidgetRoot.visualizerHeights = heights
-      mediaWidgetRoot.visualizerFlat = !playing
-    }
-  }
+  // One driver animates the bars for every copy, see stores/MediaVisualizer.qml
+  readonly property var visualizerHeights: MediaVisualizer.visualizerHeights
+  readonly property string driverKey: widgetId + ":" + monitorName
+  readonly property bool wantsVisualizer: visible && showVisualizer
+  onWantsVisualizerChanged: MediaVisualizer.setWanting(driverKey, wantsVisualizer)
+  onIsPlayingChanged: MediaVisualizer.playing = isPlaying
+  Component.onDestruction: MediaVisualizer.setWanting(driverKey, false)
 
   ColumnLayout {
     id: mediaCardLayout

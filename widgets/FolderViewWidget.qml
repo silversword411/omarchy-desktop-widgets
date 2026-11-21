@@ -6,6 +6,7 @@ import Quickshell.Io
 import qs.Commons
 import qs.Commons as Commons
 import qs.Ui
+import "stores"
 
 WidgetCard {
   id: folderWidgetRoot
@@ -26,11 +27,12 @@ WidgetCard {
   maxWidth: 900
   maxHeight: 800
 
-  property string currentFolder: ""
-  property string currentFolderName: "Desktop"
-  property string parentFolder: ""
-  property var folderItems: []
-  property bool isLoading: false
+  // Listed once for every copy, see stores/FolderStore.qml
+  readonly property string currentFolder: FolderStore.currentFolder
+  readonly property string currentFolderName: FolderStore.currentFolderName
+  readonly property string parentFolder: FolderStore.parentFolder
+  readonly property var folderItems: FolderStore.folderItems
+  readonly property bool isLoading: FolderStore.isLoading
 
   // Display options (right-click menu)
   property string viewMode: "icons"   // "icons" | "details"
@@ -48,10 +50,7 @@ WidgetCard {
     if (!rootRef || !rootRef.settingsReady) return
     var p = getSetting("folder_path", undefined)
     var target = (p !== undefined && typeof p === "string" && p !== "") ? p : "~/Desktop"
-    if (currentFolder !== target) {
-      currentFolder = target
-      loadFolder(currentFolder)
-    }
+    if (currentFolder !== target) loadFolder(target)
     var t = getSetting("transparentBg", undefined)
     if (t !== undefined) {
       transparentBg = Boolean(t)
@@ -164,6 +163,7 @@ WidgetCard {
     if (rootRef && rootRef.settingsReady) applySavedSettings()
   }
   Component.onCompleted: {
+    FolderStore.setVisible(storeKey, visible)
     if (rootRef && rootRef.settingsReady) {
       applySavedSettings()
     }
@@ -176,44 +176,28 @@ WidgetCard {
     running: folderWidgetRoot.currentFolder === ""
     repeat: false
     onTriggered: {
-      if (folderWidgetRoot.currentFolder === "") {
-        folderWidgetRoot.currentFolder = "~/Desktop"
-        folderWidgetRoot.loadFolder(folderWidgetRoot.currentFolder)
-      }
+      if (folderWidgetRoot.currentFolder === "") folderWidgetRoot.loadFolder("~/Desktop")
     }
   }
 
-  readonly property string folderScriptPath: {
-    var u = Qt.resolvedUrl("../get-folder.sh").toString()
-    return decodeURIComponent(u.replace(/^file:\/\//, ""))
-  }
+  readonly property string folderScriptPath: FolderStore.folderScriptPath
 
-  // A new array resets the GridView (every delegate and icon is rebuilt and the
-  // scroll position is lost), so polls only assign listings that changed
-  property string folderItemsJson: "[]"
-  function setFolderItems(items) {
-    var list = Array.isArray(items) ? items : []
-    var json = JSON.stringify(list)
-    if (json === folderItemsJson) return
-    folderItemsJson = json
-    folderItems = list
-  }
+  function loadFolder(path) { FolderStore.loadFolder(path) }
 
-  function loadFolder(path) {
-    if (!path) return
-    currentFolder = path
-    if (folderProc.running) {
-      folderProc.kill()
-    }
-    folderProc.command = [folderWidgetRoot.folderScriptPath, path]
-    isLoading = true
-    folderProc.running = true
-  }
-
+  // Only the copy that opened the pick dialog saves the chosen folder
+  property bool pickRequested: false
   function pickFolder() {
-    if (pickProc.running) return
-    isLoading = true
-    pickProc.running = true
+    if (FolderStore.picking) return
+    pickRequested = true
+    FolderStore.pickFolder()
+  }
+  Connections {
+    target: FolderStore
+    function onFolderPicked(path) {
+      if (!folderWidgetRoot.pickRequested) return
+      folderWidgetRoot.pickRequested = false
+      folderWidgetRoot.saveSetting("folder_path", path)
+    }
   }
 
   function openItem(item) {
@@ -237,86 +221,15 @@ WidgetCard {
     Quickshell.execDetached(["xdg-open", (currentFolder || "~/Desktop").replace(/^~/, Quickshell.env("HOME") || "")])
   }
 
-  Process {
-    id: folderProc
-    command: [folderWidgetRoot.folderScriptPath, folderWidgetRoot.currentFolder || "~/Desktop"]
-    running: false
-    onStarted: folderWidgetRoot.lastListMs = Date.now()
-    stdout: SplitParser {
-      onRead: function(line) {
-        var str = String(line).trim()
-        if (!str) return
-        try {
-          var data = JSON.parse(str)
-          if (data.status === "ok") {
-            folderWidgetRoot.currentFolder = data.folder || folderWidgetRoot.currentFolder
-            folderWidgetRoot.currentFolderName = data.folder_name || "Folder"
-            folderWidgetRoot.parentFolder = data.parent || ""
-            folderWidgetRoot.setFolderItems(data.items)
-          }
-        } catch (e) {
-          console.warn("[FolderViewWidget] Parse error:", e)
-        }
-        folderWidgetRoot.isLoading = false
-      }
-    }
-    onExited: {
-      folderWidgetRoot.isLoading = false
-    }
-  }
+  function refreshFolder() { FolderStore.refreshFolder() }
 
-  Process {
-    id: pickProc
-    command: [folderWidgetRoot.folderScriptPath, "pick"]
-    running: false
-    stdout: SplitParser {
-      onRead: function(line) {
-        var str = String(line).trim()
-        if (!str) return
-        try {
-          var data = JSON.parse(str)
-          if (data.status === "ok") {
-            folderWidgetRoot.currentFolder = data.folder || folderWidgetRoot.currentFolder
-            folderWidgetRoot.currentFolderName = data.folder_name || "Folder"
-            folderWidgetRoot.parentFolder = data.parent || ""
-            folderWidgetRoot.setFolderItems(data.items)
-            folderWidgetRoot.saveSetting("folder_path", folderWidgetRoot.currentFolder)
-          } else if (data.status === "cancelled") {
-            // Pick dialog was cancelled
-          }
-        } catch (e) {
-          console.warn("[FolderViewWidget] Pick parse error:", e)
-        }
-        folderWidgetRoot.isLoading = false
-      }
-    }
-    onExited: {
-      folderWidgetRoot.isLoading = false
-    }
-  }
-
-  function refreshFolder() {
-    if (!folderProc.running && folderWidgetRoot.currentFolder !== "") {
-      folderProc.command = [folderWidgetRoot.folderScriptPath, folderWidgetRoot.currentFolder]
-      folderProc.running = true
-    }
-  }
-
-  // Auto-refresh folder every 10 seconds while on screen; when it comes back,
-  // refresh right away only if the listing is already older than the interval
-  property real lastListMs: 0
-  onVisibleChanged: {
-    if (visible && Date.now() - lastListMs >= folderRefreshTimer.interval && !folderWidgetRoot.isLoading && !pickProc.running) {
-      refreshFolder()
-    }
-  }
-
-  Timer {
-    id: folderRefreshTimer
-    interval: 10000
-    running: folderWidgetRoot.visible && !folderWidgetRoot.isLoading && !folderWidgetRoot.contextMenuOpen && !pickProc.running && folderWidgetRoot.currentFolder !== ""
-    repeat: true
-    onTriggered: folderWidgetRoot.refreshFolder()
+  // Tells the store whether this copy is on screen or has its menu open
+  readonly property string storeKey: widgetId + ":" + monitorName
+  onVisibleChanged: FolderStore.setVisible(storeKey, visible)
+  onContextMenuOpenChanged: FolderStore.setMenuOpen(storeKey, contextMenuOpen)
+  Component.onDestruction: {
+    FolderStore.setVisible(storeKey, false)
+    FolderStore.setMenuOpen(storeKey, false)
   }
 
   function getFileGlyph(item) {
