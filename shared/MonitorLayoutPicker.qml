@@ -3,10 +3,12 @@ import QtQuick.Layouts
 import Quickshell
 import qs.Commons
 import qs.Commons as Commons
+import qs.Ui
 
 // Miniature map of the connected displays. Each display is a toggle that shows
 // or hides the widget on that output; "All" puts it on every connected display,
-// "Reset Pos" gives it this display's position on all of them.
+// "R" gives it this display's position on all of them once, and "S"
+// keeps doing that after every move or resize.
 ColumnLayout {
   id: pickerRoot
 
@@ -71,6 +73,14 @@ ColumnLayout {
     applyMonitors(list)
   }
 
+  readonly property bool syncEnabled: (rootRef && rootRef.isPositionSyncEnabled && rootRef.widgetSettings) ? rootRef.isPositionSyncEnabled(widgetId) : false
+
+  function toggleSync() {
+    if (rootRef && rootRef.setPositionSyncEnabled) {
+      rootRef.setPositionSyncEnabled(widgetId, !syncEnabled, currentMonitor)
+    }
+  }
+
   function resetPositions() {
     if (rootRef && rootRef.syncWidgetPositions) {
       rootRef.syncWidgetPositions(widgetId, currentMonitor)
@@ -118,10 +128,47 @@ ColumnLayout {
       elide: Text.ElideRight
     }
 
+    // Toggle: keep the widget's position the same on every display it is shown
+    // on, copying each saved move or resize to the others.
+    Rectangle {
+      implicitWidth: syncLabel.implicitWidth + Style.space(14)
+      implicitHeight: 20
+      radius: 6
+      color: pickerRoot.syncEnabled
+        ? Qt.rgba(Commons.Color.accent.r, Commons.Color.accent.g, Commons.Color.accent.b, syncMouse.containsMouse ? 0.40 : 0.25)
+        : (syncMouse.containsMouse ? Util.alpha(Commons.Color.foreground, 0.15) : Util.alpha(Commons.Color.foreground, 0.06))
+      border.color: Qt.rgba(Commons.Color.accent.r, Commons.Color.accent.g, Commons.Color.accent.b, pickerRoot.syncEnabled ? 0.9 : 0.4)
+      border.width: 1
+
+      Text {
+        id: syncLabel
+        anchors.centerIn: parent
+        text: "S"
+        textFormat: Text.PlainText
+        font.family: Style.font.family
+        font.pixelSize: 10
+        font.weight: Font.Bold
+        color: pickerRoot.syncEnabled ? Commons.Color.accent : Commons.Color.foreground
+      }
+
+      MouseArea {
+        id: syncMouse
+        anchors.fill: parent
+        hoverEnabled: true
+        cursorShape: Qt.PointingHandCursor
+        onClicked: pickerRoot.toggleSync()
+      }
+
+      PanelToolTip {
+        visible: syncMouse.containsMouse
+        text: "Sync position across monitors"
+      }
+    }
+
     // Copies this display's position and size for the widget to every display
     // it is shown on, scaled to each display's size.
     Rectangle {
-      implicitWidth: resetPosLabel.implicitWidth + Style.space(18)
+      implicitWidth: resetPosLabel.implicitWidth + Style.space(14)
       implicitHeight: 20
       radius: 6
       color: resetPosMouse.containsMouse ? Util.alpha(Commons.Color.foreground, 0.15) : Util.alpha(Commons.Color.foreground, 0.06)
@@ -131,7 +178,7 @@ ColumnLayout {
       Text {
         id: resetPosLabel
         anchors.centerIn: parent
-        text: "Reset Pos"
+        text: "R"
         textFormat: Text.PlainText
         font.family: Style.font.family
         font.pixelSize: 10
@@ -145,6 +192,11 @@ ColumnLayout {
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
         onClicked: pickerRoot.resetPositions()
+      }
+
+      PanelToolTip {
+        visible: resetPosMouse.containsMouse
+        text: "Reset Positions across all Monitors"
       }
     }
 

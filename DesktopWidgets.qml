@@ -218,6 +218,20 @@ Item {
   }
   onIsAnyWidgetDraggingChanged: if (!isAnyWidgetDragging && stackSaveTimer.running) stackSaveTimer.restart()
 
+  // Per-widget "S" toggle in the Displays picker: every saved move or resize
+  // on one display is copied to the others.
+  function isPositionSyncEnabled(id) {
+    var targetId = (id === "btc_tracker") ? "coin_tracker" : id
+    var ws = root.widgetSettings
+    return !!(ws && ws[targetId] && ws[targetId].sync_positions === true)
+  }
+
+  function setPositionSyncEnabled(id, enabled, monitorName) {
+    var targetId = (id === "btc_tracker") ? "coin_tracker" : id
+    root.saveWidgetSetting(targetId, "sync_positions", enabled === true)
+    if (enabled === true && monitorName) root.syncWidgetPositions(targetId, monitorName)
+  }
+
   function saveWidgetPos(id, x, y, w, h, monitorName) {
     var screens = Quickshell.screens
     var isMulti = screens && screens.length > 1
@@ -246,6 +260,7 @@ Item {
       } else {
         Quickshell.execDetached([root.manageScriptPath, "save_pos", id, x.toString(), y.toString(), monitorName])
       }
+      if (root.isPositionSyncEnabled(id)) root.syncWidgetPositions(id, monitorName)
     } else {
       p[id] = entry
       root.widgetPositions = p
