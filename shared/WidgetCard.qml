@@ -419,6 +419,10 @@ Item {
   property bool layoutSubmenuOpen: false
   onContextMenuOpenChanged: if (!contextMenuOpen) layoutSubmenuOpen = false
 
+  // A widget can take a right-click before the card menu opens by declaring
+  // its own handleRightClick(x, y) (card coordinates) that returns true.
+  function handleRightClick(x, y) { return false }
+
   // Right-click handler on the widget body. Also live in edit mode: the drag
   // areas only take the left button, so right-clicks fall through to here.
   MouseArea {
@@ -427,6 +431,7 @@ Item {
     acceptedButtons: Qt.RightButton
     onClicked: function(mouse) {
       if (mouse.button === Qt.RightButton) {
+        if (widgetCardRoot.handleRightClick(mouse.x, mouse.y)) return
         widgetCardRoot.contextMenuOpen = !widgetCardRoot.contextMenuOpen
       }
     }

@@ -32,6 +32,22 @@ Item {
   property bool manualHide: false
   property bool overlayActive: false
   property bool keyboardFocusRequested: false
+
+  // The window whose widget holds a focused text field, set by the widget
+  // alongside keyboardFocusRequested; null means "any desktop window".
+  property var keyboardFocusWindow: null
+
+  // Typing into a widget: Hyprland only hands a layer surface the keyboard on
+  // a click or hover that happens while it is "on demand", and that mode is
+  // switched on by the very click that focuses the field, so the first
+  // keystrokes used to go to the previous window. A focus grab asks Hyprland
+  // to route the keyboard to the window outright, and clearing it (a click
+  // anywhere else) drops the request again.
+  HyprlandFocusGrab {
+    active: root.keyboardFocusRequested
+    windows: root.keyboardFocusWindow ? [root.keyboardFocusWindow] : desktopVariants.instances
+    onCleared: root.keyboardFocusRequested = false
+  }
   readonly property string autoHideMode: (root.appearance && root.appearance.auto_hide_mode) ? root.appearance.auto_hide_mode : "tiled"
   property bool menuOpenRequested: false
   property int activeDragCount: 0
@@ -1035,6 +1051,7 @@ Item {
   // 🖥️ Desktop Layer Shell Canvas Window
   // ---------------------------------------------------------------------------
   Variants {
+    id: desktopVariants
     model: Quickshell.screens
 
     delegate: Component {

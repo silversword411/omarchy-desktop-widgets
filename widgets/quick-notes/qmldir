@@ -1,0 +1,2 @@
+singleton QuickNotesStore 1.0 QuickNotesStore.qml
+QuickNotesWidget 1.0 QuickNotesWidget.qml

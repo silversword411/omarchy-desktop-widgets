@@ -13,6 +13,7 @@ import qs.Ui
 // Import base WidgetCard from the shared repository link or parent widgets directory
 import "../../shared"
 import ".."
+import "."
 
 WidgetCard {
   id: notesWidgetRoot
@@ -37,24 +38,157 @@ WidgetCard {
   // 📂 Data State & Backend Process
   // ---------------------------------------------------------------------------
   property string currentTab: "TASKS" // "TASKS" | "SCRATCHPAD" | "COMMANDS"
-  property var todosList: []
-  property string scratchpadText: ""
-  property var commandsList: []
+  // Shared across the per-monitor copies, see QuickNotesStore.qml
+  readonly property var todosList: QuickNotesStore.todosList
+  readonly property string scratchpadText: QuickNotesStore.scratchpadText
+  readonly property var commandsList: QuickNotesStore.commandsList
   property string currentTag: "#todo"
-  readonly property var availableTags: ["#todo", "#work", "#idea", "#bug"]
+  readonly property var tagsList: QuickNotesStore.tagsList
+  readonly property var availableTags: tagsList.map(function(t) { return t.name })
+
+  // The chosen tag must exist; after a reload or a rename pick the first one.
+  function ensureCurrentTag() {
+    // availableTags is not built yet when this first fires during construction
+    if (!tagsList || tagsList.length === 0 || !availableTags) return
+    if (availableTags.indexOf(currentTag) === -1) currentTag = tagsList[0].name
+  }
+  onTagsListChanged: ensureCurrentTag()
+  Component.onCompleted: {
+    ensureCurrentTag()
+    if (scratchpadEdit.text !== scratchpadText) scratchpadEdit.text = scratchpadText
+  }
+  onScratchpadTextChanged: if (scratchpadEdit.text !== scratchpadText && !scratchpadEdit.activeFocus) scratchpadEdit.text = scratchpadText
+
+  function tagColor(name) {
+    var c = "foreground"
+    for (var i = 0; i < tagsList.length; i++) {
+      if (tagsList[i].name === name) { c = tagsList[i].color; break }
+    }
+    if (c === "accent") return Commons.Color.accent
+    if (c === "urgent") return Commons.Color.urgent
+    if (c === "foreground") return Qt.rgba(Commons.Color.foreground.r, Commons.Color.foreground.g, Commons.Color.foreground.b, 0.7)
+    return Qt.color(c)
+  }
+
+  function tagTint(name, alpha) {
+    var c = tagColor(name)
+    return Qt.rgba(c.r, c.g, c.b, alpha)
+  }
+
+  // Logging (card menu): Obsidian Tasks export + optional event log
+  readonly property var loggingConfig: QuickNotesStore.loggingConfig
+  readonly property string tasksNoteName: QuickNotesStore.tasksNoteName
+  readonly property string logNoteName: QuickNotesStore.logNoteName
+  property bool loggingOpen: false
+
+  function saveLogging(cfg) {
+    QuickNotesStore.loggingConfig = cfg
+    runAction(["save_logging", JSON.stringify(cfg)])
+  }
+
+  function setLoggingField(key, value) {
+    var cfg = Object.assign({}, loggingConfig)
+    cfg[key] = value
+    saveLogging(cfg)
+  }
+
+  // Tag editor (Manage Tags in the card menu)
+  property bool tagEditorOpen: false
+  property int tagColorEditIndex: -1
+  readonly property var tagPalette: ["accent", "urgent", "foreground", "#ffcc40", "#10b981", "#06b6d4", "#a78bfa", "#f472b6", "#fb923c", "#60a5fa"]
+
+  function paletteColor(c) {
+    if (c === "accent") return Commons.Color.accent
+    if (c === "urgent") return Commons.Color.urgent
+    if (c === "foreground") return Commons.Color.foreground
+    return Qt.color(c)
+  }
+
+  function saveTags(list) {
+    QuickNotesStore.tagsList = list
+    runAction(["save_tags", JSON.stringify(list)])
+  }
+
+  function setTagColor(index, color) {
+    if (index < 0 || index >= tagsList.length) return
+    var l = tagsList.slice()
+    l[index] = { name: l[index].name, color: color }
+    saveTags(l)
+  }
+
+  function renameTag(index, newName) {
+    if (index < 0 || index >= tagsList.length) return
+    var n = (newName || "").trim().replace(/\s+/g, "-").replace(/^#+/, "").slice(0, 31)
+    if (!n) return
+    n = "#" + n
+    var old = tagsList[index].name
+    if (n === old || availableTags.indexOf(n) !== -1) return
+    var l = tagsList.slice()
+    l[index] = { name: n, color: l[index].color }
+    QuickNotesStore.tagsList = l
+    if (currentTag === old) currentTag = n
+    runAction(["rename_tag", old, n])
+  }
+
+  function addTag() {
+    var base = "#new", n = base, k = 2
+    while (availableTags.indexOf(n) !== -1) { n = base + k; k++ }
+    var l = tagsList.slice()
+    l.push({ name: n, color: "accent" })
+    saveTags(l)
+  }
+
+  function moveTag(from, to) {
+    if (from === to || from < 0 || to < 0 || from >= tagsList.length || to >= tagsList.length) return
+    var l = tagsList.slice()
+    var item = l.splice(from, 1)[0]
+    l.splice(to, 0, item)
+    saveTags(l)
+  }
+
+  // Row being dragged by its grip in the tag editor, and where it would land
+  property int tagDragIndex: -1
+  property int tagDropIndex: -1
+
+  // Tasks carrying the deleted tag move to the first remaining tag.
+  function removeTag(index) {
+    if (tagsList.length <= 1 || index < 0 || index >= tagsList.length) return
+    var l = tagsList.slice()
+    var removed = l.splice(index, 1)[0]
+    if (tagColorEditIndex === index) tagColorEditIndex = -1
+    QuickNotesStore.tagsList = l
+    if (currentTag === removed.name) currentTag = l[0].name
+    runAction(["delete_tag", removed.name])
+  }
   property string statusMessage: "Synced to notes.md"
   property bool feedbackActive: false
+
+  // Inputs inside the overlays and the task rows are created by delegates, so
+  // they are found through the window's focus item rather than by id.
+  readonly property Item windowFocusItem: Window.activeFocusItem
+  function focusInside(container) {
+    var it = windowFocusItem
+    while (it) {
+      if (it === container) return true
+      it = it.parent
+    }
+    return false
+  }
+  readonly property bool overlayInputFocused: windowFocusItem !== null
+    && (focusInside(tagEditor) || focusInside(loggingPanel) || focusInside(todosListView))
 
   readonly property bool hasInputFocus: (
     (typeof scratchpadEdit !== "undefined" && scratchpadEdit && scratchpadEdit.activeFocus) ||
     (typeof taskInput !== "undefined" && taskInput && taskInput.activeFocus) ||
     (typeof snipNameInput !== "undefined" && snipNameInput && snipNameInput.activeFocus) ||
     (typeof snipCmdInput !== "undefined" && snipCmdInput && snipCmdInput.activeFocus) ||
-    (typeof snipDescInput !== "undefined" && snipDescInput && snipDescInput.activeFocus)
+    (typeof snipDescInput !== "undefined" && snipDescInput && snipDescInput.activeFocus) ||
+    overlayInputFocused
   )
 
   onHasInputFocusChanged: {
     if (rootRef && "keyboardFocusRequested" in rootRef) {
+      if ("keyboardFocusWindow" in rootRef) rootRef.keyboardFocusWindow = hasInputFocus ? notesWidgetRoot.QsWindow.window : null
       rootRef.keyboardFocusRequested = hasInputFocus
     }
   }
@@ -69,6 +203,7 @@ WidgetCard {
         if (typeof snipNameInput !== "undefined" && snipNameInput && snipNameInput.activeFocus) snipNameInput.focus = false
         if (typeof snipCmdInput !== "undefined" && snipCmdInput && snipCmdInput.activeFocus) snipCmdInput.focus = false
         if (typeof snipDescInput !== "undefined" && snipDescInput && snipDescInput.activeFocus) snipDescInput.focus = false
+        if (notesWidgetRoot.overlayInputFocused && notesWidgetRoot.windowFocusItem) notesWidgetRoot.windowFocusItem.focus = false
       }
     }
   }
@@ -87,35 +222,7 @@ WidgetCard {
     return count
   }
   readonly property int completedCount: todosList.length - pendingCount
-  readonly property string notesManagerPath: Qt.resolvedUrl("notes_manager.py").toString().replace(/^file:\/\//, "")
-
-  Process {
-    id: notesProc
-    command: [notesWidgetRoot.notesManagerPath, "load"]
-    running: true
-    stdout: SplitParser {
-      onRead: function(line) {
-        try {
-          var res = JSON.parse(String(line).trim())
-          if (res.todos !== undefined) notesWidgetRoot.todosList = res.todos
-          if (res.scratchpad !== undefined) {
-            notesWidgetRoot.scratchpadText = res.scratchpad
-            if (scratchpadEdit.text !== res.scratchpad && !scratchpadEdit.activeFocus) {
-              scratchpadEdit.text = res.scratchpad
-            }
-          }
-          if (res.commands !== undefined) notesWidgetRoot.commandsList = res.commands
-        } catch (e) {}
-      }
-    }
-  }
-
-  function runAction(args) {
-    var cmd = [notesWidgetRoot.notesManagerPath].concat(args)
-    notesProc.running = false
-    notesProc.command = cmd
-    notesProc.running = true
-  }
+  function runAction(args) { QuickNotesStore.runAction(args) }
 
   function toggleTodo(id) {
     runAction(["toggle_todo", id.toString()])
@@ -123,6 +230,80 @@ WidgetCard {
 
   function deleteTodo(id) {
     runAction(["delete_todo", id.toString()])
+  }
+
+  // Inline task editing (click the text) and grip drag-reorder
+  property int editingTodoId: -1
+  property int todoDragIndex: -1
+  property int todoDropIndex: -1
+
+  function editTodo(id, text) {
+    var t = (text || "").trim()
+    editingTodoId = -1
+    if (!t) return
+    for (var i = 0; i < todosList.length; i++) {
+      if (todosList[i].id === id) {
+        if (todosList[i].text === t) return
+        var l = todosList.slice()
+        l[i] = Object.assign({}, l[i], { text: t })
+        QuickNotesStore.todosList = l
+        break
+      }
+    }
+    runAction(["edit_todo", id.toString(), t])
+  }
+
+  function moveTodo(from, to) {
+    if (from === to || from < 0 || to < 0 || from >= todosList.length || to >= todosList.length) return
+    var l = todosList.slice()
+    var item = l.splice(from, 1)[0]
+    l.splice(to, 0, item)
+    QuickNotesStore.todosList = l
+    runAction(["reorder_todos", JSON.stringify(l.map(function(t) { return t.id }))])
+  }
+
+  function setTodoTag(id, tag) {
+    runAction(["set_tag", id.toString(), tag])
+  }
+
+  // Tag menu opened by right-clicking a tag pill: the input pill picks the
+  // tag for new tasks (tagMenuTodoId -1), a row pill re-tags that task.
+  property bool tagMenuOpen: false
+  property int tagMenuTodoId: -1
+  property real tagMenuX: 0
+  property real tagMenuY: 0
+
+  // Called by WidgetCard before it opens its own menu: a right-click on the
+  // input tag pill or a task's tag pill opens the tag menu instead.
+  function handleRightClick(x, y) {
+    if (tagEditorOpen) return false
+    if (inputTagPill.visible && inputTagPill.contains(inputTagPill.mapFromItem(notesWidgetRoot, x, y))) {
+      openTagMenu(inputTagPill, -1)
+      return true
+    }
+    if (todosListView.visible) {
+      var lp = todosListView.mapFromItem(notesWidgetRoot, x, y)
+      var row = todosListView.itemAt(lp.x + todosListView.contentX, lp.y + todosListView.contentY)
+      if (row && row.tagPill && row.tagPill.visible && row.tagPill.contains(row.tagPill.mapFromItem(notesWidgetRoot, x, y))) {
+        openTagMenu(row.tagPill, row.modelData.id)
+        return true
+      }
+    }
+    return false
+  }
+
+  function openTagMenu(anchorItem, todoId) {
+    var pos = anchorItem.mapToItem(tagMenu.parent, 0, anchorItem.height + 4)
+    tagMenuTodoId = todoId
+    tagMenuX = Math.max(0, Math.min(pos.x, tagMenu.parent.width - tagMenu.width))
+    tagMenuY = Math.max(0, Math.min(pos.y, tagMenu.parent.height - tagMenu.height))
+    tagMenuOpen = true
+  }
+
+  function pickTag(tag) {
+    if (tagMenuTodoId < 0) currentTag = tag
+    else setTodoTag(tagMenuTodoId, tag)
+    tagMenuOpen = false
   }
 
   function addTodo(text, tag) {
@@ -388,6 +569,92 @@ WidgetCard {
           onClicked: {
             notesWidgetRoot.currentTab = "COMMANDS"
             notesWidgetRoot.openNewSnippetEditor()
+            notesWidgetRoot.contextMenuOpen = false
+          }
+        }
+      }
+
+      // Manage Tags
+      Rectangle {
+        Layout.fillWidth: true
+        implicitHeight: 28
+        radius: 6
+        color: tagsOptMouse.containsMouse ? Qt.rgba(Commons.Color.accent.r, Commons.Color.accent.g, Commons.Color.accent.b, 0.2) : "transparent"
+
+        RowLayout {
+          anchors.fill: parent
+          anchors.leftMargin: Style.space(8)
+          anchors.rightMargin: Style.space(8)
+          spacing: Style.space(8)
+
+          Text {
+            text: "\uf02c"
+            font.family: Style.font.family
+            font.pixelSize: 11
+            color: Commons.Color.accent
+          }
+          Text {
+            Layout.fillWidth: true
+            text: "Manage Tags"
+            font.family: Style.font.family
+            font.pixelSize: 11
+            color: Commons.Color.foreground
+          }
+        }
+        MouseArea {
+          id: tagsOptMouse
+          anchors.fill: parent
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          onClicked: {
+            notesWidgetRoot.tagColorEditIndex = -1
+            notesWidgetRoot.tagEditorOpen = true
+            notesWidgetRoot.contextMenuOpen = false
+          }
+        }
+      }
+
+      // Logging
+      Rectangle {
+        Layout.fillWidth: true
+        implicitHeight: 28
+        radius: 6
+        color: logOptMouse.containsMouse ? Qt.rgba(Commons.Color.accent.r, Commons.Color.accent.g, Commons.Color.accent.b, 0.2) : "transparent"
+
+        RowLayout {
+          anchors.fill: parent
+          anchors.leftMargin: Style.space(8)
+          anchors.rightMargin: Style.space(8)
+          spacing: Style.space(8)
+
+          Text {
+            text: "\uf15c"
+            font.family: Style.font.family
+            font.pixelSize: 11
+            color: Commons.Color.accent
+          }
+          Text {
+            Layout.fillWidth: true
+            text: "Logging"
+            font.family: Style.font.family
+            font.pixelSize: 11
+            color: Commons.Color.foreground
+          }
+          Text {
+            visible: notesWidgetRoot.loggingConfig.obsidian_enabled || notesWidgetRoot.loggingConfig.event_log_enabled
+            text: "on"
+            font.family: Style.font.family
+            font.pixelSize: 9
+            color: Commons.Color.accent
+          }
+        }
+        MouseArea {
+          id: logOptMouse
+          anchors.fill: parent
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          onClicked: {
+            notesWidgetRoot.loggingOpen = true
             notesWidgetRoot.contextMenuOpen = false
           }
         }
@@ -707,13 +974,15 @@ WidgetCard {
             }
           }
 
-          // Tag Pill Cycler
+          // Tag Pill Cycler (left-click cycles, right-click opens the tag menu
+          // via handleRightClick)
           Rectangle {
+            id: inputTagPill
             implicitWidth: tagText.implicitWidth + 14
             implicitHeight: 22
             radius: 11
-            color: notesWidgetRoot.currentTag === "#bug" ? Qt.rgba(Commons.Color.urgent.r, Commons.Color.urgent.g, Commons.Color.urgent.b, 0.25) : Qt.rgba(Commons.Color.accent.r, Commons.Color.accent.g, Commons.Color.accent.b, 0.2)
-            border.color: notesWidgetRoot.currentTag === "#bug" ? Commons.Color.urgent : Commons.Color.accent
+            color: notesWidgetRoot.tagTint(notesWidgetRoot.currentTag, 0.22)
+            border.color: notesWidgetRoot.tagColor(notesWidgetRoot.currentTag)
             border.width: 1
 
             Text {
@@ -723,7 +992,7 @@ WidgetCard {
               font.family: Style.font.family
               font.pixelSize: 10
               font.weight: Font.Bold
-              color: notesWidgetRoot.currentTag === "#bug" ? Commons.Color.urgent : Commons.Color.accent
+              color: notesWidgetRoot.tagColor(notesWidgetRoot.currentTag)
             }
 
             MouseArea {
@@ -772,23 +1041,93 @@ WidgetCard {
         Layout.fillWidth: true
         Layout.fillHeight: true
         clip: true
+        interactive: notesWidgetRoot.todoDragIndex === -1
         spacing: Style.space(6)
         model: notesWidgetRoot.todosList
 
         delegate: Rectangle {
+          id: todoRow
           required property var modelData
+          required property int index
+          property alias tagPill: rowTagPill
+          readonly property bool beingDragged: notesWidgetRoot.todoDragIndex === index
+          readonly property bool editing: notesWidgetRoot.editingTodoId === modelData.id
+          readonly property real rowStride: height + todosListView.spacing
+          property real dragOffset: 0
           width: todosListView.width
           height: 38
           radius: 10
-          color: taskItemMouse.containsMouse ? notesWidgetRoot.fgTint(0.08) : notesWidgetRoot.fgTint(0.03)
-          border.color: notesWidgetRoot.fgTint(0.07)
+          z: beingDragged ? 10 : 0
+          transform: Translate { y: todoRow.beingDragged ? todoRow.dragOffset : 0 }
+          color: todoRow.beingDragged ? notesWidgetRoot.fgTint(0.12) : (taskItemMouse.containsMouse ? notesWidgetRoot.fgTint(0.08) : notesWidgetRoot.fgTint(0.03))
+          border.color: todoRow.beingDragged || todoRow.editing ? Commons.Color.accent : notesWidgetRoot.fgTint(0.07)
           border.width: 1
+
+          // Drop marker above the row a dragged task would land on
+          Rectangle {
+            visible: notesWidgetRoot.todoDragIndex !== -1 && notesWidgetRoot.todoDropIndex === todoRow.index && !todoRow.beingDragged
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
+            anchors.topMargin: -4
+            height: 2
+            radius: 1
+            color: Commons.Color.accent
+          }
 
           RowLayout {
             anchors.fill: parent
-            anchors.leftMargin: Style.space(10)
+            anchors.leftMargin: Style.space(4)
             anchors.rightMargin: Style.space(10)
             spacing: Style.space(8)
+
+            // Drag grip: reorder tasks
+            Item {
+              width: 14
+              height: 24
+              Text {
+                anchors.centerIn: parent
+                text: "\uf0c9"
+                font.family: Style.font.family
+                font.pixelSize: 10
+                color: todoGripMouse.containsMouse || todoRow.beingDragged ? Commons.Color.accent : notesWidgetRoot.fgTint(0.3)
+              }
+              MouseArea {
+                id: todoGripMouse
+                anchors.fill: parent
+                hoverEnabled: true
+                preventStealing: true
+                cursorShape: todoRow.beingDragged ? Qt.ClosedHandCursor : Qt.OpenHandCursor
+                property real pressY: 0
+                onPressed: function(mouse) {
+                  // Measured in the list's frame: the row itself moves with the drag
+                  pressY = mapToItem(todosListView, mouse.x, mouse.y).y
+                  todoRow.dragOffset = 0
+                  notesWidgetRoot.editingTodoId = -1
+                  notesWidgetRoot.todoDragIndex = todoRow.index
+                  notesWidgetRoot.todoDropIndex = todoRow.index
+                }
+                onPositionChanged: function(mouse) {
+                  if (!pressed) return
+                  todoRow.dragOffset = mapToItem(todosListView, mouse.x, mouse.y).y - pressY
+                  var target = todoRow.index + Math.round(todoRow.dragOffset / todoRow.rowStride)
+                  notesWidgetRoot.todoDropIndex = Math.max(0, Math.min(notesWidgetRoot.todosList.length - 1, target))
+                }
+                onReleased: {
+                  var from = notesWidgetRoot.todoDragIndex
+                  var to = notesWidgetRoot.todoDropIndex
+                  notesWidgetRoot.todoDragIndex = -1
+                  notesWidgetRoot.todoDropIndex = -1
+                  todoRow.dragOffset = 0
+                  notesWidgetRoot.moveTodo(from, to)
+                }
+                onCanceled: {
+                  notesWidgetRoot.todoDragIndex = -1
+                  notesWidgetRoot.todoDropIndex = -1
+                  todoRow.dragOffset = 0
+                }
+              }
+            }
 
             // Custom Checkbox
             Rectangle {
@@ -816,29 +1155,62 @@ WidgetCard {
               }
             }
 
-            // Task Text
-            Text {
+            // Task Text: click to edit in place, Enter or focus loss saves
+            Item {
               Layout.fillWidth: true
-              text: modelData.text || ""
-              font.family: Style.font.family
-              font.pixelSize: 12
-              font.strikeout: modelData.done
-              color: modelData.done ? Qt.rgba(Commons.Color.foreground.r, Commons.Color.foreground.g, Commons.Color.foreground.b, 0.4) : Commons.Color.foreground
-              elide: Text.ElideRight
+              Layout.fillHeight: true
+
+              Text {
+                anchors.fill: parent
+                verticalAlignment: Text.AlignVCenter
+                visible: !todoRow.editing
+                text: modelData.text || ""
+                font.family: Style.font.family
+                font.pixelSize: 12
+                font.strikeout: modelData.done
+                color: modelData.done ? Qt.rgba(Commons.Color.foreground.r, Commons.Color.foreground.g, Commons.Color.foreground.b, 0.4) : Commons.Color.foreground
+                elide: Text.ElideRight
+
+                MouseArea {
+                  anchors.fill: parent
+                  cursorShape: Qt.IBeamCursor
+                  onClicked: {
+                    notesWidgetRoot.editingTodoId = todoRow.modelData.id
+                    todoEditInput.text = todoRow.modelData.text || ""
+                    todoEditInput.forceActiveFocus()
+                    todoEditInput.cursorPosition = todoEditInput.text.length
+                  }
+                }
+              }
+
+              TextInput {
+                id: todoEditInput
+                anchors.fill: parent
+                verticalAlignment: TextInput.AlignVCenter
+                visible: todoRow.editing
+                font.family: Style.font.family
+                font.pixelSize: 12
+                color: Commons.Color.foreground
+                clip: true
+                selectByMouse: true
+                cursorVisible: activeFocus
+                onActiveFocusChanged: if (!activeFocus && todoRow.editing) notesWidgetRoot.editTodo(todoRow.modelData.id, text)
+                onAccepted: focus = false
+                Keys.onEscapePressed: {
+                  notesWidgetRoot.editingTodoId = -1
+                  focus = false
+                }
+              }
             }
 
-            // Tag Pill
+            // Tag Pill (right-click re-tags via handleRightClick)
             Rectangle {
+              id: rowTagPill
               visible: modelData.tag !== undefined && modelData.tag !== ""
               implicitWidth: rowTagText.implicitWidth + 10
               implicitHeight: 18
               radius: 9
-              color: {
-                if (modelData.tag === "#bug") return Qt.rgba(Commons.Color.urgent.r, Commons.Color.urgent.g, Commons.Color.urgent.b, 0.2)
-                if (modelData.tag === "#work") return Qt.rgba(Commons.Color.accent.r, Commons.Color.accent.g, Commons.Color.accent.b, 0.2)
-                if (modelData.tag === "#idea") return Qt.rgba(1, 0.75, 0.2, 0.2)
-                return notesWidgetRoot.fgTint(0.1)
-              }
+              color: notesWidgetRoot.tagTint(modelData.tag, 0.2)
 
               Text {
                 id: rowTagText
@@ -847,13 +1219,9 @@ WidgetCard {
                 font.family: Style.font.family
                 font.pixelSize: 9
                 font.weight: Font.DemiBold
-                color: {
-                  if (modelData.tag === "#bug") return Commons.Color.urgent
-                  if (modelData.tag === "#work") return Commons.Color.accent
-                  if (modelData.tag === "#idea") return Qt.rgba(1, 0.8, 0.25, 1.0)
-                  return Qt.rgba(Commons.Color.foreground.r, Commons.Color.foreground.g, Commons.Color.foreground.b, 0.7)
-                }
+                color: notesWidgetRoot.tagColor(modelData.tag)
               }
+
             }
 
             // Delete Button (visible on hover)
@@ -1695,6 +2063,637 @@ WidgetCard {
           }
         }
       }
+    }
+  }
+
+  // Click-away catcher for the tag menu
+  MouseArea {
+    anchors.fill: parent
+    z: 99
+    visible: notesWidgetRoot.tagMenuOpen
+    acceptedButtons: Qt.LeftButton | Qt.RightButton
+    onClicked: notesWidgetRoot.tagMenuOpen = false
+  }
+
+  Rectangle {
+    id: tagMenu
+    x: notesWidgetRoot.tagMenuX
+    y: notesWidgetRoot.tagMenuY
+    z: 100
+    visible: notesWidgetRoot.tagMenuOpen
+    width: 110
+    height: tagMenuColumn.implicitHeight + 8
+    radius: 8
+    color: Commons.Color.background
+    border.color: notesWidgetRoot.fgTint(0.15)
+    border.width: 1
+
+    ColumnLayout {
+      id: tagMenuColumn
+      anchors.fill: parent
+      anchors.margins: 4
+      spacing: 2
+
+      Repeater {
+        model: notesWidgetRoot.availableTags
+
+        Rectangle {
+          required property string modelData
+          Layout.fillWidth: true
+          implicitHeight: 24
+          radius: 6
+          readonly property bool isCurrent: notesWidgetRoot.tagMenuTodoId < 0 && notesWidgetRoot.currentTag === modelData
+          color: tagItemMouse.containsMouse ? Qt.rgba(Commons.Color.accent.r, Commons.Color.accent.g, Commons.Color.accent.b, 0.2) : "transparent"
+
+          Text {
+            anchors.verticalCenter: parent.verticalCenter
+            anchors.left: parent.left
+            anchors.leftMargin: 8
+            text: parent.modelData
+            textFormat: Text.PlainText
+            font.family: Style.font.family
+            font.pixelSize: 10
+            font.weight: parent.isCurrent ? Font.Bold : Font.Normal
+            color: notesWidgetRoot.tagColor(parent.modelData)
+          }
+
+          MouseArea {
+            id: tagItemMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: notesWidgetRoot.pickTag(parent.modelData)
+          }
+        }
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 🏷️ Tag Editor Overlay (names and colours of the task tags)
+  // ---------------------------------------------------------------------------
+  Rectangle {
+    id: tagEditor
+    anchors.fill: parent
+    z: 95
+    visible: notesWidgetRoot.tagEditorOpen
+    radius: 12
+    color: Commons.Color.background
+    border.color: Qt.rgba(Commons.Color.accent.r, Commons.Color.accent.g, Commons.Color.accent.b, 0.4)
+    border.width: 1
+
+    MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; onClicked: notesWidgetRoot.tagColorEditIndex = -1 }
+
+    ColumnLayout {
+      anchors.fill: parent
+      anchors.margins: Style.space(12)
+      spacing: Style.space(8)
+
+      RowLayout {
+        Layout.fillWidth: true
+        spacing: Style.space(8)
+
+        Text {
+          text: "\uf02c"
+          font.family: Style.font.family
+          font.pixelSize: 12
+          color: Commons.Color.accent
+        }
+        Text {
+          Layout.fillWidth: true
+          text: "Manage Tags"
+          font.family: Style.font.family
+          font.pixelSize: 12
+          font.weight: Font.Bold
+          color: Commons.Color.foreground
+        }
+
+        Rectangle {
+          implicitWidth: doneLabel.implicitWidth + 20
+          implicitHeight: 24
+          radius: 12
+          color: doneMouse.containsMouse ? Qt.lighter(Commons.Color.accent, 1.2) : Commons.Color.accent
+          Text {
+            id: doneLabel
+            anchors.centerIn: parent
+            text: "Done"
+            font.family: Style.font.family
+            font.pixelSize: 10
+            font.weight: Font.Bold
+            color: Commons.Color.background
+          }
+          MouseArea {
+            id: doneMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: {
+              notesWidgetRoot.tagColorEditIndex = -1
+              notesWidgetRoot.tagEditorOpen = false
+            }
+          }
+        }
+      }
+
+      Text {
+        Layout.fillWidth: true
+        text: "Click a swatch to pick a colour. Renaming a tag updates its tasks."
+        font.family: Style.font.family
+        font.pixelSize: 9
+        color: notesWidgetRoot.fgTint(0.5)
+        wrapMode: Text.WordWrap
+      }
+
+      ListView {
+        id: tagEditorList
+        Layout.fillWidth: true
+        Layout.fillHeight: true
+        clip: true
+        interactive: notesWidgetRoot.tagDragIndex === -1
+        spacing: 4
+        model: notesWidgetRoot.tagsList
+
+        delegate: ColumnLayout {
+          id: tagRow
+          required property var modelData
+          required property int index
+          width: tagEditorList.width
+          spacing: 4
+
+          readonly property bool pickingColor: notesWidgetRoot.tagColorEditIndex === index
+          readonly property bool beingDragged: notesWidgetRoot.tagDragIndex === index
+          readonly property real rowStride: 32 + tagEditorList.spacing
+          property real dragOffset: 0
+
+          z: beingDragged ? 10 : 0
+          transform: Translate { y: tagRow.beingDragged ? tagRow.dragOffset : 0 }
+
+          Rectangle {
+            Layout.fillWidth: true
+            implicitHeight: 32
+            radius: 8
+            color: tagRow.beingDragged ? notesWidgetRoot.fgTint(0.12) : notesWidgetRoot.fgTint(0.04)
+            border.color: tagNameInput.activeFocus || tagRow.beingDragged ? Commons.Color.accent : notesWidgetRoot.fgTint(0.08)
+            border.width: 1
+
+            // Drop marker: a line above this row when a dragged tag would land here
+            Rectangle {
+              visible: notesWidgetRoot.tagDragIndex !== -1 && notesWidgetRoot.tagDropIndex === tagRow.index && !tagRow.beingDragged
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.top: parent.top
+              anchors.topMargin: -3
+              height: 2
+              radius: 1
+              color: Commons.Color.accent
+            }
+
+            RowLayout {
+              anchors.fill: parent
+              anchors.leftMargin: 4
+              anchors.rightMargin: 6
+              spacing: 8
+
+              // Drag grip: reorder tags
+              Item {
+                width: 14
+                height: 24
+                Text {
+                  anchors.centerIn: parent
+                  text: "\uf0c9"
+                  font.family: Style.font.family
+                  font.pixelSize: 10
+                  color: gripMouse.containsMouse || tagRow.beingDragged ? Commons.Color.accent : notesWidgetRoot.fgTint(0.35)
+                }
+                MouseArea {
+                  id: gripMouse
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  preventStealing: true
+                  cursorShape: tagRow.beingDragged ? Qt.ClosedHandCursor : Qt.OpenHandCursor
+                  property real pressY: 0
+                  onPressed: function(mouse) {
+                    // Measured in the list's frame: the row itself moves with the drag
+                    pressY = mapToItem(tagEditorList, mouse.x, mouse.y).y
+                    tagRow.dragOffset = 0
+                    notesWidgetRoot.tagColorEditIndex = -1
+                    notesWidgetRoot.tagDragIndex = tagRow.index
+                    notesWidgetRoot.tagDropIndex = tagRow.index
+                  }
+                  onPositionChanged: function(mouse) {
+                    if (!pressed) return
+                    tagRow.dragOffset = mapToItem(tagEditorList, mouse.x, mouse.y).y - pressY
+                    var target = tagRow.index + Math.round(tagRow.dragOffset / tagRow.rowStride)
+                    notesWidgetRoot.tagDropIndex = Math.max(0, Math.min(notesWidgetRoot.tagsList.length - 1, target))
+                  }
+                  onReleased: {
+                    var from = notesWidgetRoot.tagDragIndex
+                    var to = notesWidgetRoot.tagDropIndex
+                    notesWidgetRoot.tagDragIndex = -1
+                    notesWidgetRoot.tagDropIndex = -1
+                    tagRow.dragOffset = 0
+                    notesWidgetRoot.moveTag(from, to)
+                  }
+                  onCanceled: {
+                    notesWidgetRoot.tagDragIndex = -1
+                    notesWidgetRoot.tagDropIndex = -1
+                    tagRow.dragOffset = 0
+                  }
+                }
+              }
+
+              // Colour swatch
+              Rectangle {
+                width: 18
+                height: 18
+                radius: 9
+                color: notesWidgetRoot.paletteColor(tagRow.modelData.color)
+                border.color: tagRow.pickingColor ? Commons.Color.foreground : notesWidgetRoot.fgTint(0.25)
+                border.width: tagRow.pickingColor ? 2 : 1
+                MouseArea {
+                  anchors.fill: parent
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: notesWidgetRoot.tagColorEditIndex = tagRow.pickingColor ? -1 : tagRow.index
+                }
+              }
+
+              // Name: the whole row height is clickable to edit
+              TextInput {
+                id: tagNameInput
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                verticalAlignment: TextInput.AlignVCenter
+                text: tagRow.modelData.name
+                font.family: Style.font.family
+                font.pixelSize: 11
+                color: Commons.Color.foreground
+                clip: true
+                selectByMouse: true
+                activeFocusOnPress: true
+                maximumLength: 32
+                cursorVisible: activeFocus
+                onActiveFocusChanged: if (!activeFocus) notesWidgetRoot.renameTag(tagRow.index, text)
+                onAccepted: focus = false
+              }
+
+              // Delete
+              Rectangle {
+                width: 20
+                height: 20
+                radius: 10
+                visible: notesWidgetRoot.tagsList.length > 1
+                color: tagDelMouse.containsMouse ? Qt.rgba(Commons.Color.urgent.r, Commons.Color.urgent.g, Commons.Color.urgent.b, 0.35) : "transparent"
+                Text {
+                  anchors.centerIn: parent
+                  text: "\uf1f8"
+                  font.family: Style.font.family
+                  font.pixelSize: 9
+                  color: tagDelMouse.containsMouse ? Commons.Color.urgent : notesWidgetRoot.fgTint(0.4)
+                }
+                MouseArea {
+                  id: tagDelMouse
+                  anchors.fill: parent
+                  hoverEnabled: true
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: notesWidgetRoot.removeTag(tagRow.index)
+                }
+              }
+            }
+          }
+
+          // Palette row, shown for the tag whose swatch was clicked
+          Rectangle {
+            Layout.fillWidth: true
+            visible: tagRow.pickingColor
+            implicitHeight: paletteRow.implicitHeight + 12
+            radius: 8
+            color: notesWidgetRoot.fgTint(0.03)
+            border.color: notesWidgetRoot.fgTint(0.08)
+            border.width: 1
+
+            RowLayout {
+              id: paletteRow
+              anchors.fill: parent
+              anchors.margins: 6
+              spacing: 6
+
+              Repeater {
+                model: notesWidgetRoot.tagPalette
+                Rectangle {
+                  required property string modelData
+                  width: 18
+                  height: 18
+                  radius: 9
+                  color: notesWidgetRoot.paletteColor(modelData)
+                  border.color: tagRow.modelData.color === modelData ? Commons.Color.foreground : notesWidgetRoot.fgTint(0.25)
+                  border.width: tagRow.modelData.color === modelData ? 2 : 1
+                  MouseArea {
+                    anchors.fill: parent
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: notesWidgetRoot.setTagColor(tagRow.index, parent.modelData)
+                  }
+                }
+              }
+
+              Rectangle {
+                Layout.fillWidth: true
+                Layout.minimumWidth: 64
+                implicitHeight: 20
+                radius: 6
+                color: notesWidgetRoot.fgTint(0.05)
+                border.color: hexInput.activeFocus ? Commons.Color.accent : notesWidgetRoot.fgTint(0.12)
+                border.width: 1
+                TextInput {
+                  id: hexInput
+                  anchors.fill: parent
+                  anchors.leftMargin: 6
+                  anchors.rightMargin: 6
+                  verticalAlignment: TextInput.AlignVCenter
+                  text: tagRow.modelData.color.charAt(0) === "#" ? tagRow.modelData.color : ""
+                  font.family: "Monospace"
+                  font.pixelSize: 10
+                  color: Commons.Color.foreground
+                  clip: true
+                  selectByMouse: true
+                  maximumLength: 7
+                  validator: RegularExpressionValidator { regularExpression: /#?[0-9a-fA-F]{0,6}/ }
+                  onAccepted: {
+                    var v = text.trim()
+                    if (v.charAt(0) !== "#") v = "#" + v
+                    if (/^#[0-9a-fA-F]{6}$/.test(v)) notesWidgetRoot.setTagColor(tagRow.index, v.toLowerCase())
+                    focus = false
+                  }
+                  Text {
+                    anchors.fill: parent
+                    verticalAlignment: Text.AlignVCenter
+                    text: "#hex"
+                    font.family: "Monospace"
+                    font.pixelSize: 10
+                    color: notesWidgetRoot.fgTint(0.35)
+                    visible: !hexInput.text && !hexInput.activeFocus
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      // Add tag
+      Rectangle {
+        Layout.fillWidth: true
+        implicitHeight: 28
+        radius: 8
+        color: addTagMouse.containsMouse ? Qt.rgba(Commons.Color.accent.r, Commons.Color.accent.g, Commons.Color.accent.b, 0.15) : notesWidgetRoot.fgTint(0.04)
+        border.color: Qt.rgba(Commons.Color.accent.r, Commons.Color.accent.g, Commons.Color.accent.b, 0.35)
+        border.width: 1
+        Text {
+          anchors.centerIn: parent
+          text: "\uf067  Add tag"
+          font.family: Style.font.family
+          font.pixelSize: 10
+          font.weight: Font.Bold
+          color: Commons.Color.accent
+        }
+        MouseArea {
+          id: addTagMouse
+          anchors.fill: parent
+          hoverEnabled: true
+          cursorShape: Qt.PointingHandCursor
+          onClicked: notesWidgetRoot.addTag()
+        }
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // 📝 Logging Overlay: Obsidian Tasks export and event log
+  // ---------------------------------------------------------------------------
+  Rectangle {
+    id: loggingPanel
+    anchors.fill: parent
+    z: 95
+    visible: notesWidgetRoot.loggingOpen
+    radius: 12
+    color: Commons.Color.background
+    border.color: Qt.rgba(Commons.Color.accent.r, Commons.Color.accent.g, Commons.Color.accent.b, 0.4)
+    border.width: 1
+
+    MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons }
+
+    component LogToggle: Rectangle {
+      id: toggleRoot
+      property bool checked: false
+      signal toggled(bool value)
+      width: 34
+      height: 18
+      radius: 9
+      color: checked ? Commons.Color.accent : notesWidgetRoot.fgTint(0.15)
+      Rectangle {
+        width: 14
+        height: 14
+        radius: 7
+        y: 2
+        x: toggleRoot.checked ? parent.width - width - 2 : 2
+        color: Commons.Color.background
+        Behavior on x { NumberAnimation { duration: Style.duration(120); easing.type: Easing.OutCubic } }
+      }
+      MouseArea {
+        anchors.fill: parent
+        cursorShape: Qt.PointingHandCursor
+        onClicked: toggleRoot.toggled(!toggleRoot.checked)
+      }
+    }
+
+    ColumnLayout {
+      anchors.fill: parent
+      anchors.margins: Style.space(12)
+      spacing: Style.space(10)
+
+      RowLayout {
+        Layout.fillWidth: true
+        spacing: Style.space(8)
+        Text {
+          text: "\uf15c"
+          font.family: Style.font.family
+          font.pixelSize: 12
+          color: Commons.Color.accent
+        }
+        Text {
+          Layout.fillWidth: true
+          text: "Logging"
+          font.family: Style.font.family
+          font.pixelSize: 12
+          font.weight: Font.Bold
+          color: Commons.Color.foreground
+        }
+        Rectangle {
+          implicitWidth: logDoneLabel.implicitWidth + 20
+          implicitHeight: 24
+          radius: 12
+          color: logDoneMouse.containsMouse ? Qt.lighter(Commons.Color.accent, 1.2) : Commons.Color.accent
+          Text {
+            id: logDoneLabel
+            anchors.centerIn: parent
+            text: "Done"
+            font.family: Style.font.family
+            font.pixelSize: 10
+            font.weight: Font.Bold
+            color: Commons.Color.background
+          }
+          MouseArea {
+            id: logDoneMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: notesWidgetRoot.loggingOpen = false
+          }
+        }
+      }
+
+      // Obsidian folder: both notes are written here
+      Rectangle {
+        Layout.fillWidth: true
+        implicitHeight: folderCol.implicitHeight + 20
+        radius: 10
+        color: notesWidgetRoot.fgTint(0.04)
+        border.color: notesWidgetRoot.fgTint(0.08)
+        border.width: 1
+
+        ColumnLayout {
+          id: folderCol
+          anchors.fill: parent
+          anchors.margins: 10
+          spacing: 6
+
+          Text {
+            text: "Obsidian folder"
+            font.family: Style.font.family
+            font.pixelSize: 11
+            font.weight: Font.Bold
+            color: Commons.Color.foreground
+          }
+          Text {
+            Layout.fillWidth: true
+            text: "A folder inside your vault. The notes below are written there; Obsidian picks up the changes live."
+            font.family: Style.font.family
+            font.pixelSize: 9
+            color: notesWidgetRoot.fgTint(0.5)
+            wrapMode: Text.WordWrap
+          }
+
+          Rectangle {
+            Layout.fillWidth: true
+            implicitHeight: 26
+            radius: 6
+            color: notesWidgetRoot.fgTint(0.05)
+            border.color: obsidianFolderInput.activeFocus ? Commons.Color.accent : notesWidgetRoot.fgTint(0.12)
+            border.width: 1
+            TextInput {
+              id: obsidianFolderInput
+              anchors.fill: parent
+              anchors.leftMargin: 8
+              anchors.rightMargin: 8
+              verticalAlignment: TextInput.AlignVCenter
+              text: notesWidgetRoot.loggingConfig.obsidian_folder || ""
+              font.family: "Monospace"
+              font.pixelSize: 10
+              color: Commons.Color.foreground
+              clip: true
+              selectByMouse: true
+              maximumLength: 512
+              onActiveFocusChanged: {
+                if (!activeFocus && text.trim() !== "" && text.trim() !== notesWidgetRoot.loggingConfig.obsidian_folder) {
+                  notesWidgetRoot.setLoggingField("obsidian_folder", text.trim())
+                }
+              }
+              onAccepted: focus = false
+            }
+          }
+        }
+      }
+
+      // Live task list
+      Rectangle {
+        Layout.fillWidth: true
+        implicitHeight: tasksNoteRow.implicitHeight + 20
+        radius: 10
+        color: notesWidgetRoot.fgTint(0.04)
+        border.color: notesWidgetRoot.fgTint(0.08)
+        border.width: 1
+
+        RowLayout {
+          id: tasksNoteRow
+          anchors.fill: parent
+          anchors.margins: 10
+          spacing: 8
+          ColumnLayout {
+            Layout.fillWidth: true
+            spacing: 1
+            Text {
+              text: "Live task list  ·  " + notesWidgetRoot.tasksNoteName
+              font.family: Style.font.family
+              font.pixelSize: 11
+              font.weight: Font.Bold
+              color: Commons.Color.foreground
+            }
+            Text {
+              Layout.fillWidth: true
+              text: "Kept in sync both ways in the Obsidian Tasks format: - [ ] text #tag ➕ added ✅ done 🆔 id. Tick, edit, add or delete lines in Obsidian and the list follows; keep the 🆔 on a line you edit."
+              font.family: Style.font.family
+              font.pixelSize: 9
+              color: notesWidgetRoot.fgTint(0.5)
+              wrapMode: Text.WordWrap
+            }
+          }
+          LogToggle {
+            checked: notesWidgetRoot.loggingConfig.obsidian_enabled === true
+            onToggled: function(v) { notesWidgetRoot.setLoggingField("obsidian_enabled", v) }
+          }
+        }
+      }
+
+      // Event log
+      Rectangle {
+        Layout.fillWidth: true
+        implicitHeight: eventCol.implicitHeight + 20
+        radius: 10
+        color: notesWidgetRoot.fgTint(0.04)
+        border.color: notesWidgetRoot.fgTint(0.08)
+        border.width: 1
+
+        RowLayout {
+          id: eventCol
+          anchors.fill: parent
+          anchors.margins: 10
+          spacing: 8
+          ColumnLayout {
+            Layout.fillWidth: true
+            spacing: 1
+            Text {
+              text: "Event log  ·  " + notesWidgetRoot.logNoteName
+              font.family: Style.font.family
+              font.pixelSize: 11
+              font.weight: Font.Bold
+              color: Commons.Color.foreground
+            }
+            Text {
+              Layout.fillWidth: true
+              text: "Appends one line per add, done, reopen, edit, retag and delete under a heading for each day"
+              font.family: Style.font.family
+              font.pixelSize: 9
+              color: notesWidgetRoot.fgTint(0.5)
+              wrapMode: Text.WordWrap
+            }
+          }
+          LogToggle {
+            checked: notesWidgetRoot.loggingConfig.event_log_enabled === true
+            onToggled: function(v) { notesWidgetRoot.setLoggingField("event_log_enabled", v) }
+          }
+        }
+      }
+
+      Item { Layout.fillHeight: true }
     }
   }
 }
