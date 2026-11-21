@@ -391,6 +391,67 @@ Item {
     Quickshell.execDetached([root.manageScriptPath, "move_to_monitor", targetId, fromMon, toMon, JSON.stringify(fromList), JSON.stringify(toList)])
   }
 
+  // Maps a saved geometry from one monitor onto another. The free space is
+  // scaled rather than the raw coordinate so edge-aligned widgets stay
+  // edge-aligned on a differently sized monitor.
+  function scalePositionToMonitor(srcPos, srcSize, dstSize) {
+    var entry = { x: srcPos.x, y: srcPos.y }
+    if (srcPos.w) entry.w = srcPos.w
+    if (srcPos.h) entry.h = srcPos.h
+    if (srcSize && dstSize && srcSize.w > 0 && srcSize.h > 0) {
+      var w = srcPos.w || 0
+      var h = srcPos.h || 0
+      var rx = (srcSize.w > w && dstSize.w > w) ? (dstSize.w - w) / (srcSize.w - w) : dstSize.w / srcSize.w
+      var ry = (srcSize.h > h && dstSize.h > h) ? (dstSize.h - h) / (srcSize.h - h) : dstSize.h / srcSize.h
+      entry.x = Math.round(srcPos.x * rx)
+      entry.y = Math.round(srcPos.y * ry)
+    }
+    return entry
+  }
+
+  // Gives the widget the same (scaled) position and size on every monitor it is
+  // shown on, taken from its position on sourceMonitor.
+  function syncWidgetPositions(id, sourceMonitor) {
+    var targetId = (id === "btc_tracker") ? "coin_tracker" : id
+    var screens = Quickshell.screens
+    if (!screens || screens.length <= 1 || !sourceMonitor) return
+
+    var sizes = {}
+    for (var i = 0; i < screens.length; i++) {
+      if (screens[i] && screens[i].name) sizes[screens[i].name] = { w: screens[i].width, h: screens[i].height }
+    }
+    if (!sizes[sourceMonitor]) return
+
+    var mp = Object.assign({}, root.monitorPositions)
+    var srcPos = null
+    if (mp[sourceMonitor]) {
+      srcPos = mp[sourceMonitor][targetId] || (targetId === "coin_tracker" ? mp[sourceMonitor]["btc_tracker"] : null)
+    }
+    if (!srcPos && root.widgetPositions) {
+      srcPos = root.widgetPositions[targetId] || (targetId === "coin_tracker" ? root.widgetPositions["btc_tracker"] : null)
+    }
+    if (!srcPos || srcPos.x === undefined || srcPos.y === undefined) return
+
+    var synced = {}
+    for (var m in sizes) {
+      if (!root.isWidgetActiveOnMonitor(targetId, m)) continue
+      var entry = (m === sourceMonitor)
+        ? { x: srcPos.x, y: srcPos.y }
+        : root.scalePositionToMonitor(srcPos, sizes[sourceMonitor], sizes[m])
+      if (m === sourceMonitor) {
+        if (srcPos.w) entry.w = srcPos.w
+        if (srcPos.h) entry.h = srcPos.h
+      }
+      var monitorMap = Object.assign({}, mp[m] || {})
+      monitorMap[targetId] = entry
+      mp[m] = monitorMap
+      synced[m] = entry
+    }
+
+    root.monitorPositions = mp
+    Quickshell.execDetached([root.manageScriptPath, "sync_widget_positions", targetId, JSON.stringify(synced)])
+  }
+
   // Shows the widget on exactly the given connected monitors. Newly added monitors
   // inherit the widget's relative position from sourceMonitor.
   function setWidgetMonitors(id, monitorNames, sourceMonitor) {
@@ -430,19 +491,7 @@ Item {
       if (want && !wasOn) {
         lists[m].push(targetId)
         if (srcPos && srcPos.x !== undefined && srcPos.y !== undefined && !root.hasMonitorPositionForWidget(targetId, m)) {
-          var entry = { x: srcPos.x, y: srcPos.y }
-          if (srcPos.w) entry.w = srcPos.w
-          if (srcPos.h) entry.h = srcPos.h
-          if (srcSize && srcSize.w > 0 && srcSize.h > 0) {
-            // Scale the free space rather than the raw coordinate so edge-aligned
-            // widgets stay edge-aligned on a differently sized monitor.
-            var w = srcPos.w || 0
-            var h = srcPos.h || 0
-            var rx = (srcSize.w > w && sizes[m].w > w) ? (sizes[m].w - w) / (srcSize.w - w) : sizes[m].w / srcSize.w
-            var ry = (srcSize.h > h && sizes[m].h > h) ? (sizes[m].h - h) / (srcSize.h - h) : sizes[m].h / srcSize.h
-            entry.x = Math.round(srcPos.x * rx)
-            entry.y = Math.round(srcPos.y * ry)
-          }
+          var entry = root.scalePositionToMonitor(srcPos, srcSize, sizes[m])
           var monitorMap = Object.assign({}, mp[m] || {})
           monitorMap[targetId] = entry
           mp[m] = monitorMap

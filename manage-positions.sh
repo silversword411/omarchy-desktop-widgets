@@ -716,6 +716,29 @@ def main():
             "monitor_enabled_widgets": settings.get('monitor_enabled_widgets', {}),
             "monitor_positions": settings.get('monitor_positions', {})
         }))
+    elif action == 'sync_widget_positions' and len(sys.argv) >= 4:
+        widget_id = sys.argv[2]
+        try:
+            synced_positions = json.loads(sys.argv[3])
+        except Exception:
+            synced_positions = None
+
+        if isinstance(synced_positions, dict):
+            if not isinstance(settings.get('monitor_positions'), dict):
+                settings['monitor_positions'] = {}
+            for monitor, geom in synced_positions.items():
+                if not isinstance(geom, dict) or 'x' not in geom or 'y' not in geom:
+                    continue
+                if not isinstance(settings['monitor_positions'].get(monitor), dict):
+                    settings['monitor_positions'][monitor] = {}
+                settings['monitor_positions'][monitor][widget_id] = copy.deepcopy(geom)
+            save_settings(settings)
+
+        print(json.dumps({
+            "status": "widget_positions_synced",
+            "widget_id": widget_id,
+            "monitor_positions": settings.get('monitor_positions', {})
+        }))
     elif action == 'save_setting' and len(sys.argv) >= 5:
         widget_id = sys.argv[2]
         key = sys.argv[3]

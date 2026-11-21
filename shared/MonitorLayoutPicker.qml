@@ -5,7 +5,8 @@ import qs.Commons
 import qs.Commons as Commons
 
 // Miniature map of the connected displays. Each display is a toggle that shows
-// or hides the widget on that output; "All" puts it on every connected display.
+// or hides the widget on that output; "All" puts it on every connected display,
+// "Reset Pos" gives it this display's position on all of them.
 ColumnLayout {
   id: pickerRoot
 
@@ -70,6 +71,12 @@ ColumnLayout {
     applyMonitors(list)
   }
 
+  function resetPositions() {
+    if (rootRef && rootRef.syncWidgetPositions) {
+      rootRef.syncWidgetPositions(widgetId, currentMonitor)
+    }
+  }
+
   function toggleAll() {
     if (onAll) {
       if (currentMonitor !== "") applyMonitors([currentMonitor])
@@ -109,6 +116,36 @@ ColumnLayout {
       font.weight: Font.Bold
       color: Commons.Color.foreground
       elide: Text.ElideRight
+    }
+
+    // Copies this display's position and size for the widget to every display
+    // it is shown on, scaled to each display's size.
+    Rectangle {
+      implicitWidth: resetPosLabel.implicitWidth + Style.space(18)
+      implicitHeight: 20
+      radius: 6
+      color: resetPosMouse.containsMouse ? Util.alpha(Commons.Color.foreground, 0.15) : Util.alpha(Commons.Color.foreground, 0.06)
+      border.color: Qt.rgba(Commons.Color.accent.r, Commons.Color.accent.g, Commons.Color.accent.b, 0.4)
+      border.width: 1
+
+      Text {
+        id: resetPosLabel
+        anchors.centerIn: parent
+        text: "Reset Pos"
+        textFormat: Text.PlainText
+        font.family: Style.font.family
+        font.pixelSize: 10
+        font.weight: Font.Bold
+        color: Commons.Color.foreground
+      }
+
+      MouseArea {
+        id: resetPosMouse
+        anchors.fill: parent
+        hoverEnabled: true
+        cursorShape: Qt.PointingHandCursor
+        onClicked: pickerRoot.resetPositions()
+      }
     }
 
     Rectangle {
